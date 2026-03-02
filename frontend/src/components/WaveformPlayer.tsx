@@ -16,6 +16,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react"
+import api from "@/lib/axios"
 
 export interface WaveformPlayerRef {
   seekTo: (seconds: number) => void
@@ -49,6 +50,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     useEffect(() => {
       if (!containerRef.current) return
       let ws: any
+      let blobUrl: string | null = null
 
       const init = async () => {
         const WaveSurfer = (await import("wavesurfer.js")).default
@@ -66,7 +68,16 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
 
         wsRef.current = ws
 
-        ws.load(audioUrl)
+        // Fetch audio through the axios instance so the JWT header is included.
+        // WaveSurfer's own fetch() call would not carry the Authorization header.
+        try {
+          const response = await api.get(audioUrl, { responseType: "blob" })
+          blobUrl = URL.createObjectURL(response.data)
+          ws.load(blobUrl)
+        } catch {
+          // Surface loading errors as a ready=false state — parent will show skeleton
+          return
+        }
 
         ws.on("ready", () => {
           setDuration(ws.getDuration())
@@ -98,6 +109,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       return () => {
         ws?.destroy()
         wsRef.current = null
+        if (blobUrl) URL.revokeObjectURL(blobUrl)
       }
     }, [audioUrl]) // eslint-disable-line react-hooks/exhaustive-deps
 
