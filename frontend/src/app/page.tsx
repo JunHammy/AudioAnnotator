@@ -22,7 +22,7 @@ export default function Home() {
 
   return (
     <Center h="100vh">
-      <Spinner size="xl" color="brand.500" />
+      <Spinner size="xl" />
     </Center>
   );
 }

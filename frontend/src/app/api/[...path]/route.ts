@@ -18,10 +18,17 @@ async function proxy(req: NextRequest, params: Params) {
     }
   });
 
-  const body =
-    req.method !== "GET" && req.method !== "HEAD" ? await req.text() : undefined;
-
-  const res = await fetch(url.toString(), { method: req.method, headers, body });
+  // Stream the body directly — do NOT buffer with req.text() or req.arrayBuffer().
+  // Streaming is essential for large binary uploads (audio files).
+  // duplex: "half" is required by Node.js 18+ for streaming request bodies.
+  const body = req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined;
+  const res = await fetch(url.toString(), {
+    method: req.method,
+    headers,
+    body,
+    // @ts-expect-error — Node.js fetch requires duplex for streaming bodies
+    duplex: "half",
+  });
 
   const resHeaders = new Headers();
   res.headers.forEach((value, key) => {

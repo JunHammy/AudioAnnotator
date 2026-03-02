@@ -8,9 +8,9 @@ export default function AdminDashboard() {
 
   return (
     <Box p={8}>
-      <Heading mb={2}>Admin Dashboard</Heading>
-      <Text color="gray.500">Welcome, {user?.username}</Text>
-      {/* TODO: Stats, file list, assignment overview */}
+      <Heading size="lg" color="fg" mb={1}>Admin Dashboard</Heading>
+      <Text color="fg.muted">Welcome, {user?.username}</Text>
+      {/* TODO: Stats cards, recent activity, annotator summary */}
     </Box>
   );
 }

@@ -8,9 +8,9 @@ export default function AnnotatorTasks() {
 
   return (
     <Box p={8}>
-      <Heading mb={2}>My Tasks</Heading>
-      <Text color="gray.500">Welcome, {user?.username}</Text>
-      {/* TODO: List of assigned files with statuses */}
+      <Heading size="lg" color="fg" mb={1}>My Tasks</Heading>
+      <Text color="fg.muted">Welcome, {user?.username}</Text>
+      {/* TODO: Task table with filter buttons */}
     </Box>
   );
 }
