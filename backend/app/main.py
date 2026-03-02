@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, users, audio_files, assignments, segments
+from app.routers import admin, auth, users, audio_files, assignments, segments, review
 
 app = FastAPI(
     title="AudioAnnotator API",
@@ -19,11 +19,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/users", tags=["users"])
 app.include_router(audio_files.router, prefix="/api/audio-files", tags=["audio-files"])
 app.include_router(assignments.router, prefix="/api/assignments", tags=["assignments"])
 app.include_router(segments.router, prefix="/api/segments", tags=["segments"])
+app.include_router(review.router, prefix="/api/review", tags=["review"])
 
 
 @app.get("/api/health")

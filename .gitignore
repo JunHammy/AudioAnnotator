@@ -66,7 +66,6 @@ backend/uploads/
 exports/
 output/
 results/
-docs/
 
 # Logs
 *.log
@@ -82,3 +81,7 @@ temp/
 
 # Alembic (keep versions tracked, ignore pycache)
 backend/alembic/versions/__pycache__/
+
+# Dev
+docs/
+data/

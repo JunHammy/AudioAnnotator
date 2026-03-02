@@ -5,24 +5,33 @@ Run from the backend/ directory with the venv activated:
 
     python dbTools.py
 
-Expects audio/JSON files under:
-    AudioAnnotator/data/<subfolder>/
-        <name>.wav  (or .mp3)
-        <name>_emotion.json      ← emotion + gender segments
-        <name>_speaker.json      ← speaker diarization
-        <name>_transcription.json
+Expects the following layout under AudioAnnotator/data/:
+
+    data/
+        audio/           <name>.wav   (or .mp3)
+        emotion_gender/  <name>.json  — 2-s prediction windows
+        speaker/         <name>.json  — speaker diarization (speaker_0 → speaker_1 on import)
+        transcription/   <name>.json  — transcription text segments
+
+The speaker JSON's "subfolder" field determines the AudioFile.subfolder group.
 """
 
 import asyncio
+import io
 import json
 import random
 import shutil
 import sys
 from pathlib import Path
 
+# Force UTF-8 on Windows consoles that default to cp1252
+if sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).parent))
 
-from sqlalchemy import delete, select, text as sql_text
+from sqlalchemy import select, text as sql_text
 
 from app.auth.jwt import hash_password
 from app.config import settings
@@ -47,22 +56,7 @@ ANNOTATORS = [
 ]
 DEFAULT_PASSWORD = "password123"
 
-EMOTIONS   = ["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust"]
-GENDERS    = ["Male", "Female", "unk"]
-LANGUAGES  = ["English", "Malay", "Chinese", "Tamil"]
-TASK_TYPES = ["emotion", "gender", "speaker", "transcription"]
-SAMPLE_TEXTS = [
-    "Hello, how are you today?",
-    "Let me explain this concept.",
-    "I understand what you mean.",
-    "Could you repeat that please?",
-    "That is a very interesting point.",
-    "I agree with your assessment.",
-    "We need to discuss this further.",
-    "Thank you for your patience.",
-    "Can we go over that again?",
-    "That sounds about right.",
-]
+LANGUAGES = ["English", "Malay", "Chinese", "Tamil"]
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -75,10 +69,90 @@ def section(title: str):
     print(f"  {title}")
     hr()
 
-def ok(msg):  print(f"  ✓  {msg}")
+def ok(msg):   print(f"  ✓  {msg}")
 def skip(msg): print(f"  ~  {msg}")
 def err(msg):  print(f"  ✗  {msg}")
 def info(msg): print(f"  ·  {msg}")
+
+
+def _renumber_speaker(label: str) -> str:
+    """Convert speaker_0 → speaker_1, speaker_1 → speaker_2, etc. (0-based → 1-based)."""
+    if not label:
+        return label
+    lower = label.lower()
+    if lower.startswith("speaker_"):
+        try:
+            n = int(lower.split("_", 1)[1])
+            return f"speaker_{n + 1}"
+        except ValueError:
+            pass
+    return label
+
+
+def _overlapping_window(seg_start: float, seg_end: float, windows: list) -> dict | None:
+    """Return the emotion/gender window with the greatest overlap with [seg_start, seg_end]."""
+    best = None
+    best_overlap = 0.0
+    for w in windows:
+        overlap = min(seg_end, w["end_time"]) - max(seg_start, w["start_time"])
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best = w
+    return best
+
+
+def _parse_speaker_json(data: dict) -> tuple:
+    """
+    Returns (subfolder, num_speakers, duration, segments).
+    Segments: list of {start_time, end_time, speaker_label}.
+    speaker_0 → speaker_1.
+    """
+    subfolder = data.get("subfolder", "")
+    num_speakers = data.get("num_speakers", 0)
+    segs_raw = data.get("speakers", [])
+    segs = [
+        {
+            "start_time": s["start_time"],
+            "end_time":   s["end_time"],
+            "speaker_label": _renumber_speaker(s.get("speaker", "")),
+        }
+        for s in segs_raw
+    ]
+    duration = max((s["end_time"] for s in segs), default=0.0)
+    if not num_speakers and segs:
+        labels = {s["speaker_label"] for s in segs}
+        num_speakers = len(labels)
+    return subfolder, num_speakers, round(duration, 3), segs
+
+
+def _parse_emotion_gender_json(data: dict) -> list:
+    """
+    Returns list of windows: {start_time, end_time, gender, emotion}.
+    Values are title-cased for consistency.
+    """
+    predictions = data.get("predictions", {})
+    windows = []
+    for entry in predictions.values():
+        windows.append({
+            "start_time": float(entry.get("start_time", 0)),
+            "end_time":   float(entry.get("end_time",   0)),
+            "gender":     entry.get("gender", "unk").title(),   # male → Male
+            "emotion":    entry.get("emotion", "").title(),     # neutral → Neutral
+        })
+    return sorted(windows, key=lambda w: w["start_time"])
+
+
+def _parse_transcription_json(data: dict) -> list:
+    """Returns list of {start_time, end_time, text}."""
+    return [
+        {
+            "start_time": float(t["start_time"]),
+            "end_time":   float(t["end_time"]),
+            "text":       t.get("text", ""),
+        }
+        for t in data.get("texts", [])
+    ]
+
 
 # ── actions ───────────────────────────────────────────────────────────────────
 
@@ -107,9 +181,14 @@ async def create_annotators():
 async def import_audio_files():
     section("Import Audio Files from data/")
 
-    if not DATA_DIR.exists():
-        err(f"data/ not found at {DATA_DIR}")
-        info("Create  AudioAnnotator/data/<subfolder>/  and add your files there.")
+    audio_dir   = DATA_DIR / "audio"
+    emo_dir     = DATA_DIR / "emotion_gender"
+    speaker_dir = DATA_DIR / "speaker"
+    trans_dir   = DATA_DIR / "transcription"
+
+    if not audio_dir.exists():
+        err(f"data/audio/ not found at {audio_dir}")
+        info("Place your .wav/.mp3 files under  AudioAnnotator/data/audio/")
         return
 
     upload_dir = Path(settings.upload_dir)
@@ -123,91 +202,119 @@ async def import_audio_files():
 
         imported = skipped = 0
 
-        for folder in sorted(f for f in DATA_DIR.iterdir() if f.is_dir()):
-            subfolder = folder.name
+        for audio in sorted(f for f in audio_dir.iterdir() if f.suffix.lower() in (".wav", ".mp3")):
+            # Skip if already in DB
+            result = await db.execute(select(AudioFile).where(AudioFile.filename == audio.name))
+            if result.scalar_one_or_none():
+                skipped += 1
+                continue
+
+            stem = audio.stem   # e.g. my001005_9454
+
+            speaker_path = speaker_dir / f"{stem}.json"
+            emo_path     = emo_dir     / f"{stem}.json"
+            trans_path   = trans_dir   / f"{stem}.json"
+
+            # ── Parse JSONs ──────────────────────────────────────────────────
+            subfolder    = stem.rsplit("_", 1)[0] if "_" in stem else stem
+            num_speakers = 1
+            duration     = 0.0
+            spk_segs     = []
+            spk_data     = None
+            emo_windows  = []
+            emo_data     = None
+            trans_segs   = []
+            trans_data   = None
+            language     = random.choice(LANGUAGES)
+
+            if speaker_path.exists():
+                try:
+                    spk_data = json.loads(speaker_path.read_text(encoding="utf-8"))
+                    subfolder, num_speakers, duration, spk_segs = _parse_speaker_json(spk_data)
+                except Exception as exc:
+                    info(f"  speaker parse error ({stem}): {exc}")
+
+            if emo_path.exists():
+                try:
+                    emo_data = json.loads(emo_path.read_text(encoding="utf-8"))
+                    emo_windows = _parse_emotion_gender_json(emo_data)
+                    if not duration and emo_windows:
+                        duration = emo_windows[-1]["end_time"]
+                except Exception as exc:
+                    info(f"  emotion_gender parse error ({stem}): {exc}")
+
+            if trans_path.exists():
+                try:
+                    trans_data = json.loads(trans_path.read_text(encoding="utf-8"))
+                    trans_segs = _parse_transcription_json(trans_data)
+                except Exception as exc:
+                    info(f"  transcription parse error ({stem}): {exc}")
+
+            # ── Copy audio to uploads/<subfolder>/ ───────────────────────────
             dest_dir  = upload_dir / subfolder
             dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = dest_dir / audio.name
+            if not dest_file.exists():
+                shutil.copy2(audio, dest_file)
 
-            audio_files = sorted(
-                f for f in folder.iterdir()
-                if f.suffix.lower() in (".wav", ".mp3")
-                and not any(tag in f.stem for tag in ("_emotion", "_speaker", "_transcription"))
+            # ── Create AudioFile record ──────────────────────────────────────
+            af = AudioFile(
+                filename=audio.name,
+                subfolder=subfolder,
+                duration=round(duration, 2),
+                language=language,
+                num_speakers=num_speakers,
+                file_path=str(dest_file),
+                uploaded_by=admin.id,
             )
+            db.add(af)
+            await db.flush()
 
-            for audio in audio_files:
-                result = await db.execute(
-                    select(AudioFile).where(AudioFile.filename == audio.name)
-                )
-                if result.scalar_one_or_none():
-                    skipped += 1
-                    continue
+            # ── Store original JSONs verbatim ────────────────────────────────
+            for raw, json_type in (
+                (emo_data,   "emotion_gender"),
+                (spk_data,   "speaker"),
+                (trans_data, "transcription"),
+            ):
+                if raw is not None:
+                    db.add(OriginalJSONStore(audio_file_id=af.id, json_type=json_type, data=raw))
 
-                base = audio.stem
-                emotion_path       = folder / f"{base}_emotion.json"
-                speaker_path       = folder / f"{base}_speaker.json"
-                transcription_path = folder / f"{base}_transcription.json"
+            # ── Pre-annotated SpeakerSegments (baseline) ─────────────────────
+            # For each speaker diarization segment, map emotion/gender from the
+            # emotion_gender prediction window with the greatest time overlap.
+            for s in spk_segs:
+                win = _overlapping_window(s["start_time"], s["end_time"], emo_windows)
+                db.add(SpeakerSegment(
+                    audio_file_id=af.id,
+                    annotator_id=admin.id,          # baseline attributed to admin/system
+                    speaker_label=s["speaker_label"],
+                    start_time=round(s["start_time"], 3),
+                    end_time=round(s["end_time"], 3),
+                    gender=win["gender"] if win else "unk",
+                    emotion=win["emotion"] if win else None,
+                    source="pre_annotated",
+                ))
 
-                # Copy audio to uploads/
-                dest_file = dest_dir / audio.name
-                if not dest_file.exists():
-                    shutil.copy2(audio, dest_file)
+            # ── Pre-annotated TranscriptionSegments (baseline) ───────────────
+            for t in trans_segs:
+                db.add(TranscriptionSegment(
+                    audio_file_id=af.id,
+                    annotator_id=admin.id,
+                    start_time=round(t["start_time"], 3),
+                    end_time=round(t["end_time"], 3),
+                    original_text=t["text"],
+                ))
 
-                # Parse speaker count + duration from speaker JSON if available
-                num_speakers = random.randint(1, 4)
-                duration     = random.uniform(10.0, 60.0)
-                language     = random.choice(LANGUAGES)
-
-                if speaker_path.exists():
-                    try:
-                        data = json.loads(speaker_path.read_text(encoding="utf-8"))
-                        segs = data.get("segments", data.get("speaker_segments", []))
-                        speakers = {
-                            s.get("speaker", s.get("speaker_label", "")) for s in segs
-                        }
-                        num_speakers = max(len(speakers), 1)
-                        if segs:
-                            duration = max(
-                                s.get("end", s.get("end_time", 0)) for s in segs
-                            )
-                    except Exception:
-                        pass
-
-                af = AudioFile(
-                    filename=audio.name,
-                    subfolder=subfolder,
-                    duration=round(duration, 2),
-                    language=language,
-                    num_speakers=num_speakers,
-                    file_path=str(dest_file),
-                    uploaded_by=admin.id,
-                )
-                db.add(af)
-                await db.flush()
-
-                # Store original JSONs verbatim
-                for json_path, json_type in (
-                    (emotion_path,       "emotion_gender"),
-                    (speaker_path,       "speaker"),
-                    (transcription_path, "transcription"),
-                ):
-                    if json_path.exists():
-                        try:
-                            data = json.loads(json_path.read_text(encoding="utf-8"))
-                            db.add(OriginalJSONStore(
-                                audio_file_id=af.id,
-                                json_type=json_type,
-                                data=data,
-                            ))
-                        except Exception:
-                            pass
-
-                info(f"+ {subfolder}/{audio.name}  ({num_speakers} spk, {duration:.1f}s, {language})")
-                imported += 1
+            info(
+                f"+ {subfolder}/{audio.name}  ({num_speakers} spk, {duration:.1f}s, {language})"
+                f"  →  {len(spk_segs)} speaker segs, {len(trans_segs)} transcription segs"
+            )
+            imported += 1
 
         await db.commit()
 
     print()
-    ok(f"Imported {imported} files  ({skipped} already existed)")
+    ok(f"Imported {imported} audio files  ({skipped} already existed)")
 
 
 async def create_assignments():
@@ -226,91 +333,51 @@ async def create_assignments():
             err("No audio files found — import audio files first.")
             return
 
+        # Track existing to avoid UNIQUE constraint violations
+        existing = set()
+        for row in (await db.execute(select(Assignment))).scalars().all():
+            existing.add((row.audio_file_id, row.annotator_id, row.task_type))
+
         created = 0
         for af in audio_files:
-            # Emotion: 2-3 independent annotators
-            emotion_pool = random.sample(annotators, min(random.randint(2, 3), len(annotators)))
-            for ann in emotion_pool:
-                db.add(Assignment(
-                    audio_file_id=af.id,
-                    annotator_id=ann.id,
-                    task_type="emotion",
-                    status=random.choice(["pending", "in_progress", "completed"]),
-                ))
-                created += 1
+            # Emotion: 2–3 independent annotators
+            pool = random.sample(annotators, min(random.randint(2, 3), len(annotators)))
+            for ann in pool:
+                key = (af.id, ann.id, "emotion")
+                if key not in existing:
+                    db.add(Assignment(
+                        audio_file_id=af.id,
+                        annotator_id=ann.id,
+                        task_type="emotion",
+                        status=random.choice(["pending", "in_progress", "completed"]),
+                    ))
+                    existing.add(key)
+                    created += 1
 
             # Collaborative tasks: one annotator each
             for task_type in ("gender", "speaker", "transcription"):
-                db.add(Assignment(
-                    audio_file_id=af.id,
-                    annotator_id=random.choice(annotators).id,
-                    task_type=task_type,
-                    status=random.choice(["pending", "in_progress", "completed"]),
-                ))
-                created += 1
+                ann = random.choice(annotators)
+                key = (af.id, ann.id, task_type)
+                if key not in existing:
+                    db.add(Assignment(
+                        audio_file_id=af.id,
+                        annotator_id=ann.id,
+                        task_type=task_type,
+                        status=random.choice(["pending", "in_progress", "completed"]),
+                    ))
+                    existing.add(key)
+                    created += 1
 
         await db.commit()
 
     ok(f"Created {created} assignments across {len(audio_files)} files")
 
 
-async def create_dummy_segments():
-    section("Generate Dummy Segments")
-
-    async with AsyncSessionLocal() as db:
-        audio_files = (await db.execute(select(AudioFile))).scalars().all()
-        annotators  = (
-            await db.execute(select(User).where(User.role == "annotator"))
-        ).scalars().all()
-
-        if not audio_files or not annotators:
-            err("Need audio files and annotators first.")
-            return
-
-        seg_count = 0
-        for af in audio_files:
-            duration = af.duration or 30.0
-            n        = random.randint(4, 10)
-            # Build non-overlapping random time windows
-            times    = sorted(random.uniform(0, duration) for _ in range(n * 2))
-            windows  = [(times[i * 2], times[i * 2 + 1]) for i in range(n)]
-            labels   = [f"speaker_{i + 1}" for i in range(max(af.num_speakers or 2, 1))]
-            ann      = random.choice(annotators)
-
-            for start, end in windows:
-                if end - start < 0.3:
-                    continue
-                db.add(SpeakerSegment(
-                    audio_file_id=af.id,
-                    annotator_id=ann.id,
-                    speaker_label=random.choice(labels),
-                    start_time=round(start, 3),
-                    end_time=round(end, 3),
-                    gender=random.choice(GENDERS),
-                    emotion=random.choice(EMOTIONS),
-                    is_ambiguous=random.random() < 0.1,
-                    source="original",
-                ))
-                db.add(TranscriptionSegment(
-                    audio_file_id=af.id,
-                    annotator_id=ann.id,
-                    start_time=round(start, 3),
-                    end_time=round(end, 3),
-                    original_text=random.choice(SAMPLE_TEXTS),
-                ))
-                seg_count += 1
-
-        await db.commit()
-
-    ok(f"Created {seg_count} segment pairs (speaker + transcription)")
-
-
 async def populate_all():
-    section("Full Population  (steps 1 → 4)")
+    section("Full Population  (steps 1 → 3 in sequence)")
     await create_annotators()
     await import_audio_files()
     await create_assignments()
-    await create_dummy_segments()
     print()
     ok("All done!")
 
@@ -341,8 +408,7 @@ MENU = [
     ("Create annotators  (annotator_1 … annotator_5)",  create_annotators),
     ("Import audio files from  data/",                   import_audio_files),
     ("Create random assignments",                        create_assignments),
-    ("Generate dummy segments",                          create_dummy_segments),
-    ("Populate ALL  (1 → 4 in sequence)",                populate_all),
+    ("Populate ALL  (1 → 3 in sequence)",                populate_all),
     ("Reset database  (keep admin only)",                 reset_database),
 ]
 

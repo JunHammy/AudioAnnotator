@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user
 from app.database import get_db
-from app.models.models import AudioFile, SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User
+from app.models.models import AudioFile, SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User, Assignment
 from app.schemas.schemas import (
     SpeakerSegmentResponse,
     SpeakerSegmentUpdate,
@@ -128,3 +128,105 @@ async def update_transcription_segment(
     await db.flush()
     await db.refresh(segment)
     return segment
+
+
+# ─── Annotation View (combined data for annotate page) ───────────────────────
+
+@router.get("/annotate/{file_id}")
+async def get_annotate_data(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns all segments for the annotation view.
+    Emotion segments are per-annotator copies (auto-created from baseline on first visit).
+    Speaker and transcription segments are the shared collaborative baseline.
+    """
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == file_id))).scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Shared speaker baseline
+    speaker_segs = (await db.execute(
+        select(SpeakerSegment)
+        .where(SpeakerSegment.audio_file_id == file_id)
+        .where(SpeakerSegment.source == "pre_annotated")
+        .order_by(SpeakerSegment.start_time)
+    )).scalars().all()
+
+    # Annotator's emotion copies
+    emotion_segs = (await db.execute(
+        select(SpeakerSegment)
+        .where(SpeakerSegment.audio_file_id == file_id)
+        .where(SpeakerSegment.annotator_id == current_user.id)
+        .where(SpeakerSegment.source == "annotator")
+        .order_by(SpeakerSegment.start_time)
+    )).scalars().all()
+
+    # Auto-create emotion copies from baseline if not yet created
+    if not emotion_segs and speaker_segs:
+        for seg in speaker_segs:
+            db.add(SpeakerSegment(
+                audio_file_id=file_id,
+                annotator_id=current_user.id,
+                speaker_label=seg.speaker_label,
+                start_time=seg.start_time,
+                end_time=seg.end_time,
+                gender=seg.gender,
+                emotion=seg.emotion,
+                source="annotator",
+            ))
+        await db.flush()
+        emotion_segs = (await db.execute(
+            select(SpeakerSegment)
+            .where(SpeakerSegment.audio_file_id == file_id)
+            .where(SpeakerSegment.annotator_id == current_user.id)
+            .where(SpeakerSegment.source == "annotator")
+            .order_by(SpeakerSegment.start_time)
+        )).scalars().all()
+
+    trans_segs = (await db.execute(
+        select(TranscriptionSegment)
+        .where(TranscriptionSegment.audio_file_id == file_id)
+        .order_by(TranscriptionSegment.start_time)
+    )).scalars().all()
+
+    # Annotator's assignments for this file
+    my_assignments = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == file_id)
+        .where(Assignment.annotator_id == current_user.id)
+    )).scalars().all()
+
+    def _spk(s: SpeakerSegment) -> dict:
+        return {
+            "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+            "speaker_label": s.speaker_label, "gender": s.gender,
+            "emotion": s.emotion, "emotion_other": s.emotion_other,
+            "is_ambiguous": s.is_ambiguous, "notes": s.notes,
+            "source": s.source,
+            "updated_at": s.updated_at.isoformat(),
+        }
+
+    def _trans(s: TranscriptionSegment) -> dict:
+        return {
+            "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+            "original_text": s.original_text, "edited_text": s.edited_text,
+            "notes": s.notes, "updated_at": s.updated_at.isoformat(),
+        }
+
+    return {
+        "audio_file": {
+            "id": af.id, "filename": af.filename,
+            "duration": af.duration, "num_speakers": af.num_speakers,
+            "language": af.language,
+        },
+        "speaker_segments": [_spk(s) for s in speaker_segs],
+        "emotion_segments": [_spk(s) for s in emotion_segs],
+        "transcription_segments": [_trans(s) for s in trans_segs],
+        "assignments": [
+            {"id": a.id, "task_type": a.task_type, "status": a.status}
+            for a in my_assignments
+        ],
+    }

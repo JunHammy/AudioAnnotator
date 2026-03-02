@@ -1,16 +1,238 @@
 "use client";
 
-import { Box, Heading, Text } from "@chakra-ui/react";
-import { useAuth } from "@/hooks/useAuth";
+import { useEffect, useState } from "react";
+import {
+  Badge,
+  Box,
+  Flex,
+  Grid,
+  Heading,
+  Progress,
+  Table,
+  Text,
+} from "@chakra-ui/react";
+import api from "@/lib/axios";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface DashboardData {
+  stats: {
+    total_files: number;
+    assigned_files: number;
+    completed_assignments: number;
+    flagged_segments: number;
+  };
+  recent_activity: {
+    id: number;
+    audio_file_id: number;
+    filename: string;
+    subfolder: string | null;
+    annotator: string;
+    task_type: string;
+    status: string;
+    created_at: string;
+  }[];
+  language_progress: {
+    language: string;
+    total_files: number;
+    completion_rate: number;
+  }[];
+  annotator_summary: {
+    id: number;
+    username: string;
+    trust_score: number;
+    is_active: boolean;
+    assigned: number;
+    completed: number;
+    created_at: string;
+  }[];
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.floor(hrs / 24)} days ago`;
+}
+
+function statusBadge(status: string) {
+  const map: Record<string, string> = {
+    completed: "green",
+    in_progress: "orange",
+    pending: "gray",
+  };
+  return (
+    <Badge colorPalette={map[status] ?? "gray"} size="sm">
+      {status.replace("_", " ")}
+    </Badge>
+  );
+}
+
+// ── Stat Card ─────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
+      <Text fontSize="sm" color="fg.muted" mb={1}>{label}</Text>
+      <Text fontSize="3xl" fontWeight="bold" color={color}>{value.toLocaleString()}</Text>
+    </Box>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
-  const { user } = useAuth();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.get("/api/admin/dashboard")
+      .then((r) => setData(r.data))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <Box p={8}>
+        <Text color="fg.muted">Loading dashboard…</Text>
+      </Box>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Box p={8}>
+        <Text color="red.400">Failed to load dashboard data.</Text>
+      </Box>
+    );
+  }
 
   return (
-    <Box p={8}>
+    <Box p={8} maxW="1200px">
       <Heading size="lg" color="fg" mb={1}>Admin Dashboard</Heading>
-      <Text color="fg.muted">Welcome, {user?.username}</Text>
-      {/* TODO: Stats cards, recent activity, annotator summary */}
+      <Text color="fg.muted" mb={6}>Overview of annotation progress</Text>
+
+      {/* Stat cards */}
+      <Grid templateColumns="repeat(4, 1fr)" gap={4} mb={8}>
+        <StatCard label="Total Files"           value={data.stats.total_files}            color="fg" />
+        <StatCard label="Files Assigned"        value={data.stats.assigned_files}         color="blue.400" />
+        <StatCard label="Completed Assignments" value={data.stats.completed_assignments}  color="green.400" />
+        <StatCard label="Flagged Segments"      value={data.stats.flagged_segments}       color="red.400" />
+      </Grid>
+
+      <Grid templateColumns="3fr 2fr" gap={6} mb={8}>
+        {/* Recent activity */}
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+          <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
+            <Text fontWeight="semibold" color="fg">Recent Activity</Text>
+          </Box>
+          <Table.Root size="sm">
+            <Table.Header>
+              <Table.Row>
+                {["File", "Annotator", "Task", "Status", "When"].map((h) => (
+                  <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
+                ))}
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {data.recent_activity.map((r) => (
+                <Table.Row key={r.id} _hover={{ bg: "bg.muted" }}>
+                  <Table.Cell px={4} py={3}>
+                    <Text fontSize="sm" color="fg" fontFamily="mono">{r.filename.replace(/\.[^.]+$/, "")}</Text>
+                    {r.subfolder && <Text fontSize="xs" color="fg.muted">{r.subfolder}</Text>}
+                  </Table.Cell>
+                  <Table.Cell px={4} py={3}>
+                    <Text fontSize="sm" color="fg">{r.annotator}</Text>
+                  </Table.Cell>
+                  <Table.Cell px={4} py={3}>
+                    <Text fontSize="sm" color="fg" textTransform="capitalize">{r.task_type}</Text>
+                  </Table.Cell>
+                  <Table.Cell px={4} py={3}>{statusBadge(r.status)}</Table.Cell>
+                  <Table.Cell px={4} py={3}>
+                    <Text fontSize="xs" color="fg.muted">{timeAgo(r.created_at)}</Text>
+                  </Table.Cell>
+                </Table.Row>
+              ))}
+            </Table.Body>
+          </Table.Root>
+        </Box>
+
+        {/* Language progress */}
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+          <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
+            <Text fontWeight="semibold" color="fg">Progress by Language</Text>
+          </Box>
+          <Box px={5} py={4}>
+            {data.language_progress.map((lp) => (
+              <Box key={lp.language} mb={5}>
+                <Flex justify="space-between" mb={1}>
+                  <Text fontSize="sm" color="fg">{lp.language}</Text>
+                  <Text fontSize="xs" color="fg.muted">{lp.total_files} files</Text>
+                </Flex>
+                <Flex align="center" gap={3}>
+                  <Progress.Root
+                    value={Math.round(lp.completion_rate * 100)}
+                    flex={1}
+                    size="sm"
+                    colorPalette="blue"
+                  >
+                    <Progress.Track rounded="full">
+                      <Progress.Range />
+                    </Progress.Track>
+                  </Progress.Root>
+                  <Text fontSize="xs" color="fg.muted" w="32px" textAlign="right">
+                    {Math.round(lp.completion_rate * 100)}%
+                  </Text>
+                </Flex>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Grid>
+
+      {/* Annotator summary */}
+      <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+        <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
+          <Text fontWeight="semibold" color="fg">Annotator Summary</Text>
+        </Box>
+        <Table.Root size="sm">
+          <Table.Header>
+            <Table.Row>
+              {["Annotator", "Assigned", "Completed", "Trust Score", "Status"].map((h) => (
+                <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
+              ))}
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {data.annotator_summary.map((a) => (
+              <Table.Row key={a.id} _hover={{ bg: "bg.muted" }}>
+                <Table.Cell px={4} py={3}>
+                  <Text fontSize="sm" color="fg">{a.username}</Text>
+                </Table.Cell>
+                <Table.Cell px={4} py={3}>
+                  <Text fontSize="sm" color="fg">{a.assigned}</Text>
+                </Table.Cell>
+                <Table.Cell px={4} py={3}>
+                  <Text fontSize="sm" color="green.400">{a.completed}</Text>
+                </Table.Cell>
+                <Table.Cell px={4} py={3}>
+                  <Text fontSize="sm" color="blue.400">{a.trust_score.toFixed(2)}</Text>
+                </Table.Cell>
+                <Table.Cell px={4} py={3}>
+                  <Badge colorPalette={a.is_active ? "green" : "red"} size="sm">
+                    {a.is_active ? "Active" : "Disabled"}
+                  </Badge>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table.Root>
+      </Box>
     </Box>
   );
 }

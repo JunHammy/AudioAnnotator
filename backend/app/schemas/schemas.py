@@ -1,7 +1,18 @@
+import re
 from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel, field_validator
+
+# ─── Shared validation constants ────────────────────────────────────────────
+
+_USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,50}$")
+_MIN_PW_LEN  = 8
+_VALID_TASK_TYPES = {"emotion", "gender", "speaker", "transcription"}
+_VALID_STATUSES   = {"pending", "in_progress", "completed"}
+_VALID_LOCK_TYPES = {"speaker", "gender", "transcription"}
+_VALID_EMOTIONS   = {"Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust", "Other"}
+_VALID_GENDERS    = {"Male", "Female", "Mixed", "unk"}
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
@@ -21,13 +32,28 @@ class TokenResponse(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
-    role: str  # admin | annotator
+    role: str
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        v = v.strip()
+        if not _USERNAME_RE.match(v):
+            raise ValueError("Username must be 3–50 characters, letters/numbers/underscore only.")
+        return v
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < _MIN_PW_LEN:
+            raise ValueError(f"Password must be at least {_MIN_PW_LEN} characters.")
+        return v
 
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
         if v not in ("admin", "annotator"):
-            raise ValueError("role must be 'admin' or 'annotator'")
+            raise ValueError("role must be 'admin' or 'annotator'.")
         return v
 
 
@@ -45,7 +71,22 @@ class UserResponse(BaseModel):
 
 class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
-    role: Optional[str] = None
+    role:      Optional[str]  = None
+    password:  Optional[str]  = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and len(v) < _MIN_PW_LEN:
+            raise ValueError(f"Password must be at least {_MIN_PW_LEN} characters.")
+        return v
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("admin", "annotator"):
+            raise ValueError("role must be 'admin' or 'annotator'.")
+        return v
 
 
 # ─── Audio Files ──────────────────────────────────────────────────────────────
@@ -59,7 +100,6 @@ class AudioFileResponse(BaseModel):
     duration: Optional[float]
     language: Optional[str]
     num_speakers: Optional[int]
-    file_path: str
     uploaded_by: int
     collaborative_locked_speaker: bool
     collaborative_locked_gender: bool
@@ -67,25 +107,33 @@ class AudioFileResponse(BaseModel):
     locked_by: Optional[int]
     locked_at: Optional[datetime]
     created_at: datetime
+    # file_path intentionally omitted — don't expose server filesystem paths to clients
 
 
 class AudioFileLockUpdate(BaseModel):
-    task_type: str  # speaker | gender | transcription
+    task_type: str
     locked: bool
+
+    @field_validator("task_type")
+    @classmethod
+    def validate_task_type(cls, v: str) -> str:
+        if v not in _VALID_LOCK_TYPES:
+            raise ValueError(f"task_type must be one of: {sorted(_VALID_LOCK_TYPES)}")
+        return v
 
 
 # ─── Assignments ─────────────────────────────────────────────────────────────
 
 class AssignmentCreate(BaseModel):
     audio_file_id: int
-    annotator_id: int
-    task_type: str  # emotion | gender | speaker | transcription
+    annotator_id:  int
+    task_type:     str
 
     @field_validator("task_type")
     @classmethod
     def validate_task_type(cls, v: str) -> str:
-        if v not in ("emotion", "gender", "speaker", "transcription"):
-            raise ValueError("Invalid task_type")
+        if v not in _VALID_TASK_TYPES:
+            raise ValueError(f"task_type must be one of: {sorted(_VALID_TASK_TYPES)}")
         return v
 
 
@@ -94,15 +142,22 @@ class AssignmentResponse(BaseModel):
 
     id: int
     audio_file_id: int
-    annotator_id: int
-    task_type: str
-    status: str
-    created_at: datetime
-    completed_at: Optional[datetime]
+    annotator_id:  int
+    task_type:     str
+    status:        str
+    created_at:    datetime
+    completed_at:  Optional[datetime]
 
 
 class AssignmentStatusUpdate(BaseModel):
-    status: str  # pending | in_progress | completed
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        if v not in _VALID_STATUSES:
+            raise ValueError(f"status must be one of: {sorted(_VALID_STATUSES)}")
+        return v
 
 
 # ─── Segments ────────────────────────────────────────────────────────────────
@@ -110,49 +165,63 @@ class AssignmentStatusUpdate(BaseModel):
 class SpeakerSegmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
-    id: int
+    id:            int
     audio_file_id: int
-    annotator_id: int
+    annotator_id:  int
     speaker_label: Optional[str]
-    start_time: float
-    end_time: float
-    gender: Optional[str]
-    emotion: Optional[str]
+    start_time:    float
+    end_time:      float
+    gender:        Optional[str]
+    emotion:       Optional[str]
     emotion_other: Optional[str]
-    notes: Optional[str]
-    is_ambiguous: bool
-    source: Optional[str]
-    updated_at: datetime
+    notes:         Optional[str]
+    is_ambiguous:  bool
+    source:        Optional[str]
+    updated_at:    datetime
 
 
 class SpeakerSegmentUpdate(BaseModel):
-    speaker_label: Optional[str] = None
-    gender: Optional[str] = None
-    emotion: Optional[str] = None
-    emotion_other: Optional[str] = None
-    notes: Optional[str] = None
-    is_ambiguous: Optional[bool] = None
-    updated_at: datetime  # Optimistic locking: client sends last-known updated_at
+    speaker_label: Optional[str]   = None
+    gender:        Optional[str]   = None
+    emotion:       Optional[str]   = None
+    emotion_other: Optional[str]   = None
+    notes:         Optional[str]   = None
+    is_ambiguous:  Optional[bool]  = None
+    updated_at:    datetime  # Optimistic locking: client sends last-known updated_at
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_GENDERS:
+            raise ValueError(f"gender must be one of: {sorted(_VALID_GENDERS)}")
+        return v
+
+    @field_validator("emotion")
+    @classmethod
+    def validate_emotion(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_EMOTIONS:
+            raise ValueError(f"emotion must be one of: {sorted(_VALID_EMOTIONS)}")
+        return v
 
 
 class TranscriptionSegmentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
-    id: int
+    id:            int
     audio_file_id: int
-    annotator_id: int
-    start_time: float
-    end_time: float
+    annotator_id:  int
+    start_time:    float
+    end_time:      float
     original_text: Optional[str]
-    edited_text: Optional[str]
-    notes: Optional[str]
-    updated_at: datetime
+    edited_text:   Optional[str]
+    notes:         Optional[str]
+    updated_at:    datetime
 
 
 class TranscriptionSegmentUpdate(BaseModel):
     edited_text: Optional[str] = None
-    notes: Optional[str] = None
-    updated_at: datetime  # Optimistic locking
+    notes:       Optional[str] = None
+    updated_at:  datetime  # Optimistic locking
 
 
 # ─── Final Annotations ───────────────────────────────────────────────────────
@@ -160,12 +229,12 @@ class TranscriptionSegmentUpdate(BaseModel):
 class FinalAnnotationResponse(BaseModel):
     model_config = {"from_attributes": True}
 
-    id: int
-    audio_file_id: int
-    segment_id: Optional[int]
+    id:              int
+    audio_file_id:   int
+    segment_id:      Optional[int]
     annotation_type: str
-    data: dict
+    data:            dict
     decision_method: Optional[str]
-    version: int
-    finalized_by: Optional[int]
-    finalized_at: Optional[datetime]
+    version:         int
+    finalized_by:    Optional[int]
+    finalized_at:    Optional[datetime]

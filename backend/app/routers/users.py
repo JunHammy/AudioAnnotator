@@ -57,6 +57,8 @@ async def update_user(
         user.is_active = body.is_active
     if body.role is not None:
         user.role = body.role
+    if body.password is not None:
+        user.password_hash = hash_password(body.password)
 
     await db.flush()
     await db.refresh(user)

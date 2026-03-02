@@ -1,12 +1,510 @@
 "use client";
 
-import { Box, Heading, Text } from "@chakra-ui/react";
+import { useCallback, useRef, useState } from "react";
+import {
+  Badge,
+  Box,
+  Button,
+  Field,
+  Flex,
+  Grid,
+  Heading,
+  Input,
+  Select,
+  Table,
+  Text,
+  Portal,
+  createListCollection,
+} from "@chakra-ui/react";
+import { Upload, X, CheckCircle, AlertCircle, Loader } from "lucide-react";
+import api from "@/lib/axios";
+import ToastWizard from "@/lib/toastWizard";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+
+type FileType = "audio" | "emotion_gender" | "speaker" | "transcription" | "unknown";
+type UploadStatus = "ready" | "uploading" | "done" | "error";
+
+interface QueueItem {
+  id: string;
+  file: File;
+  fileType: FileType;
+  status: UploadStatus;
+  error?: string;
+}
+
+interface FileGroup {
+  stem: string;             // e.g. my001005_9454
+  audio?:          QueueItem;
+  emotion_gender?: QueueItem;
+  speaker?:        QueueItem;
+  transcription?:  QueueItem;
+  status: UploadStatus;
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+const LANGUAGE_OPTIONS = createListCollection({
+  items: [
+    { label: "English", value: "English" },
+    { label: "Malay",   value: "Malay" },
+    { label: "Chinese", value: "Chinese" },
+    { label: "Tamil",   value: "Tamil" },
+  ],
+});
+
+function detectFileType(filename: string): { type: FileType; stem: string } {
+  const name  = filename.toLowerCase();
+  const ext   = name.split(".").pop() ?? "";
+  const base  = filename.replace(/\.[^.]+$/, ""); // stem without extension
+
+  if (ext === "wav" || ext === "mp3") {
+    return { type: "audio", stem: base };
+  }
+  if (ext === "json") {
+    // Check folder-style naming (data/emotion_gender/name.json) — but we only get the file
+    // Fall back to filename suffix patterns
+    if (base.endsWith("_emotion") || base.endsWith("_emotion_gender")) {
+      return { type: "emotion_gender", stem: base.replace(/_emotion_gender$/, "").replace(/_emotion$/, "") };
+    }
+    if (base.endsWith("_speaker")) {
+      return { type: "speaker", stem: base.replace(/_speaker$/, "") };
+    }
+    if (base.endsWith("_transcription")) {
+      return { type: "transcription", stem: base.replace(/_transcription$/, "") };
+    }
+    // No suffix — user must have selected from data/<folder>/name.json style
+    // Prompt user to tag them; for now mark unknown
+    return { type: "unknown", stem: base };
+  }
+  return { type: "unknown", stem: base };
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function typeLabel(t: FileType): string {
+  const map: Record<FileType, string> = {
+    audio:          "Audio",
+    emotion_gender: "Emotion / Gender",
+    speaker:        "Speaker",
+    transcription:  "Transcription",
+    unknown:        "Unknown",
+  };
+  return map[t];
+}
+
+function typeColor(t: FileType): string {
+  const map: Record<FileType, string> = {
+    audio:          "blue",
+    emotion_gender: "purple",
+    speaker:        "orange",
+    transcription:  "green",
+    unknown:        "red",
+  };
+  return map[t];
+}
+
+function statusIcon(s: UploadStatus) {
+  if (s === "done")      return <CheckCircle size={14} color="var(--chakra-colors-green-400)" />;
+  if (s === "error")     return <AlertCircle size={14} color="var(--chakra-colors-red-400)" />;
+  if (s === "uploading") return <Loader     size={14} color="var(--chakra-colors-blue-400)" />;
+  return null;
+}
+
+function groupItems(items: QueueItem[]): FileGroup[] {
+  const map = new Map<string, FileGroup>();
+  for (const item of items) {
+    const { type, stem } = detectFileType(item.file.name);
+    item.fileType = type; // update in place
+    if (!map.has(stem)) {
+      map.set(stem, { stem, status: "ready" });
+    }
+    const g = map.get(stem)!;
+    if (type === "audio")          g.audio          = item;
+    if (type === "emotion_gender") g.emotion_gender = item;
+    if (type === "speaker")        g.speaker        = item;
+    if (type === "transcription")  g.transcription  = item;
+  }
+  return [...map.values()];
+}
+
+function groupReady(g: FileGroup): boolean {
+  return !!(g.audio && g.emotion_gender && g.speaker && g.transcription);
+}
+
+// ── Drop Zone ──────────────────────────────────────────────────────────────
+
+function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const files = [...e.dataTransfer.files];
+    onFiles(files);
+  }, [onFiles]);
+
+  return (
+    <Box
+      borderWidth="2px"
+      borderStyle="dashed"
+      borderColor={dragging ? "blue.400" : "border"}
+      bg={dragging ? "blue.900" : "bg.muted"}
+      rounded="lg"
+      p={10}
+      textAlign="center"
+      cursor="pointer"
+      transition="all 0.15s"
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={handleDrop}
+      onClick={() => inputRef.current?.click()}
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept=".wav,.mp3,.json"
+        style={{ display: "none" }}
+        onChange={(e) => onFiles([...e.target.files!])}
+      />
+      <Upload size={32} color="var(--chakra-colors-fg-muted)" style={{ margin: "0 auto 12px" }} />
+      <Text color="fg" fontWeight="medium" mb={1}>Drag &amp; drop files here</Text>
+      <Text fontSize="sm" color="fg.muted" mb={3}>or click to browse</Text>
+      <Text fontSize="xs" color="fg.muted">Accepts: .wav, .mp3 + .json (emotion_gender, speaker, transcription)</Text>
+    </Box>
+  );
+}
+
+// ── JSON Type Selector ─────────────────────────────────────────────────────
+
+const JSON_TYPE_OPTIONS = createListCollection({
+  items: [
+    { label: "Emotion / Gender", value: "emotion_gender" },
+    { label: "Speaker",          value: "speaker" },
+    { label: "Transcription",    value: "transcription" },
+    { label: "Unknown",          value: "unknown" },
+  ],
+});
+
+// ── Page ──────────────────────────────────────────────────────────────────
 
 export default function UploadFilesPage() {
+  const [queue,      setQueue]      = useState<QueueItem[]>([]);
+  const [language,   setLanguage]   = useState<string[]>(["English"]);
+  const [subfolder,  setSubfolder]  = useState("");
+  const [uploading,  setUploading]  = useState(false);
+  const [sfErr,      setSfErr]      = useState("");
+
+  const SAFE_NAME_RE = /^[a-zA-Z0-9_\-.]{0,100}$/;
+
+  function addFiles(files: File[]) {
+    const newItems: QueueItem[] = files
+      .filter((f) => {
+        const ext = f.name.split(".").pop()?.toLowerCase() ?? "";
+        return ["wav", "mp3", "json"].includes(ext);
+      })
+      .map((f) => ({
+        id:       crypto.randomUUID(),
+        file:     f,
+        fileType: "unknown" as FileType,
+        status:   "ready" as UploadStatus,
+      }));
+    setQueue((prev) => {
+      const existingNames = new Set(prev.map((i) => i.file.name));
+      return [...prev, ...newItems.filter((i) => !existingNames.has(i.file.name))];
+    });
+  }
+
+  function removeItem(id: string) {
+    setQueue((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  function updateItemType(id: string, type: FileType) {
+    setQueue((prev) => prev.map((i) => i.id === id ? { ...i, fileType: type } : i));
+  }
+
+  const groups = groupItems(queue);
+
+  async function uploadGroup(g: FileGroup) {
+    if (!g.audio || !g.emotion_gender || !g.speaker || !g.transcription) return;
+
+    const updateStatus = (ids: string[], status: UploadStatus, error?: string) => {
+      setQueue((prev) => prev.map((i) =>
+        ids.includes(i.id) ? { ...i, status, error } : i
+      ));
+    };
+
+    const ids = [g.audio, g.emotion_gender, g.speaker, g.transcription].map((i) => i.id);
+    updateStatus(ids, "uploading");
+
+    const fd = new FormData();
+    fd.append("audio",               g.audio.file);
+    fd.append("emotion_gender_json", g.emotion_gender.file);
+    fd.append("speaker_json",        g.speaker.file);
+    fd.append("transcription_json",  g.transcription.file);
+    fd.append("language",   language[0] ?? "");
+    fd.append("subfolder",  subfolder.trim());
+    fd.append("num_speakers", "1"); // Will be overridden from speaker JSON on backend
+
+    try {
+      await api.post("/api/audio-files/", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      updateStatus(ids, "done");
+      ToastWizard.standard("success", "Uploaded", `${g.stem} uploaded successfully.`, 3000, true);
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail ?? "Upload failed.";
+      updateStatus(ids, "error", msg);
+      ToastWizard.standard("error", "Upload failed", `${g.stem}: ${msg}`, 5000, true);
+    }
+  }
+
+  async function uploadAll() {
+    const ready = groups.filter(groupReady);
+    if (!ready.length) return;
+
+    if (subfolder && !SAFE_NAME_RE.test(subfolder)) {
+      setSfErr("Only letters, digits, hyphens, underscores, and dots allowed.");
+      return;
+    }
+    setSfErr("");
+    setUploading(true);
+    await Promise.all(ready.map(uploadGroup));
+    setUploading(false);
+  }
+
+  function clearDone() {
+    setQueue((prev) => prev.filter((i) => i.status !== "done"));
+  }
+
+  const readyCount   = groups.filter(groupReady).length;
+  const doneCount    = groups.filter((g) => g.audio?.status === "done").length;
+  const errorCount   = groups.filter((g) => g.audio?.status === "error").length;
+
   return (
-    <Box p={8}>
+    <Box p={8} maxW="1100px">
       <Heading size="lg" color="fg" mb={1}>Upload Files</Heading>
-      <Text color="fg.muted">Upload audio files and associated annotation JSON files.</Text>
+      <Text color="fg.muted" mb={6}>Upload audio files with their corresponding JSON annotation files</Text>
+
+      <Grid templateColumns="1fr 280px" gap={6} mb={6}>
+        {/* Drop zone */}
+        <DropZone onFiles={addFiles} />
+
+        {/* Upload settings */}
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
+          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={4}>Upload Settings</Text>
+
+          <Field.Root mb={4}>
+            <Field.Label color="fg" fontSize="sm">Language</Field.Label>
+            <Select.Root collection={LANGUAGE_OPTIONS} value={language} onValueChange={(d) => setLanguage(d.value)} size="sm">
+              <Select.HiddenSelect />
+              <Select.Control>
+                <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
+                  <Select.ValueText />
+                </Select.Trigger>
+              </Select.Control>
+              <Portal>
+                <Select.Positioner>
+                  <Select.Content bg="bg.subtle" borderColor="border">
+                    {LANGUAGE_OPTIONS.items.map((item) => (
+                      <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                        {item.label}
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Positioner>
+              </Portal>
+            </Select.Root>
+          </Field.Root>
+
+          <Field.Root invalid={!!sfErr} mb={5}>
+            <Field.Label color="fg" fontSize="sm">Subfolder <Text as="span" color="fg.muted">(optional)</Text></Field.Label>
+            <Input
+              value={subfolder}
+              onChange={(e) => { setSubfolder(e.target.value); setSfErr(""); }}
+              placeholder="e.g. my001005"
+              bg="bg.muted"
+              borderColor={sfErr ? "red.400" : "border"}
+              color="fg"
+              size="sm"
+            />
+            {sfErr && <Field.ErrorText fontSize="xs">{sfErr}</Field.ErrorText>}
+            <Text fontSize="xs" color="fg.muted" mt={1}>Groups files under uploads/subfolder/</Text>
+          </Field.Root>
+
+          {/* Summary */}
+          <Box bg="bg.muted" rounded="md" p={3} mb={4} fontSize="xs" color="fg.muted">
+            <Text mb={1}><Text as="span" color="fg">{readyCount}</Text> groups ready to upload</Text>
+            {doneCount > 0 && <Text mb={1}><Text as="span" color="green.400">{doneCount}</Text> uploaded</Text>}
+            {errorCount > 0 && <Text><Text as="span" color="red.400">{errorCount}</Text> failed</Text>}
+          </Box>
+
+          <Flex direction="column" gap={2}>
+            <Button
+              colorPalette="blue"
+              size="sm"
+              w="full"
+              loading={uploading}
+              disabled={readyCount === 0}
+              onClick={uploadAll}
+            >
+              <Upload size={14} />
+              Upload All ({readyCount})
+            </Button>
+            {queue.length > 0 && (
+              <Button variant="outline" size="sm" w="full" onClick={() => setQueue([])}>
+                Clear Queue
+              </Button>
+            )}
+            {doneCount > 0 && (
+              <Button variant="ghost" size="sm" w="full" color="fg.muted" onClick={clearDone}>
+                Clear Completed
+              </Button>
+            )}
+          </Flex>
+        </Box>
+      </Grid>
+
+      {/* Preprocessing notice */}
+      <Box
+        bg="yellow.900"
+        borderWidth="1px"
+        borderColor="yellow.700"
+        rounded="md"
+        px={4}
+        py={3}
+        mb={5}
+        fontSize="xs"
+        color="yellow.200"
+      >
+        <Text fontWeight="semibold" mb={1}>Preprocessing on upload:</Text>
+        <Text>• speaker_0 → speaker_1 (all labels shifted +1 for 1-based numbering)</Text>
+        <Text>• Timestamps validated and pre-annotated segments seeded from JSON</Text>
+        <Text>• Original JSONs stored verbatim as immutable reference (used for Diff view)</Text>
+      </Box>
+
+      {/* Queue table */}
+      {queue.length > 0 && (
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+          <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
+            <Text fontSize="sm" fontWeight="semibold" color="fg">Upload Queue — {queue.length} files</Text>
+          </Box>
+          <Table.Root size="sm">
+            <Table.Header>
+              <Table.Row>
+                {["Filename", "Type", "Size", "Status", ""].map((h) => (
+                  <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
+                ))}
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {queue.map((item) => {
+                const detected = detectFileType(item.file.name);
+                const displayType = item.fileType !== "unknown" ? item.fileType : detected.type;
+                return (
+                  <Table.Row key={item.id} _hover={{ bg: "bg.muted" }}>
+                    <Table.Cell px={4} py={2}>
+                      <Text fontSize="sm" color="fg" fontFamily="mono">{item.file.name}</Text>
+                      {item.error && <Text fontSize="xs" color="red.400" mt={0.5}>{item.error}</Text>}
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      {displayType === "unknown" ? (
+                        <Select.Root
+                          collection={JSON_TYPE_OPTIONS}
+                          value={[item.fileType]}
+                          onValueChange={(d) => updateItemType(item.id, d.value[0] as FileType)}
+                          size="xs"
+                        >
+                          <Select.HiddenSelect />
+                          <Select.Control>
+                            <Select.Trigger bg="bg.muted" borderColor="red.500" color="red.400" minW="140px">
+                              <Select.ValueText placeholder="Tag type…" />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Portal>
+                            <Select.Positioner>
+                              <Select.Content bg="bg.subtle" borderColor="border">
+                                {JSON_TYPE_OPTIONS.items.map((opt) => (
+                                  <Select.Item key={opt.value} item={opt} color="fg" _hover={{ bg: "bg.muted" }}>
+                                    {opt.label}
+                                  </Select.Item>
+                                ))}
+                              </Select.Content>
+                            </Select.Positioner>
+                          </Portal>
+                        </Select.Root>
+                      ) : (
+                        <Badge colorPalette={typeColor(displayType)} size="sm">
+                          {typeLabel(displayType)}
+                        </Badge>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      <Text fontSize="xs" color="fg.muted">{formatBytes(item.file.size)}</Text>
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      <Flex align="center" gap={1.5}>
+                        {statusIcon(item.status)}
+                        <Badge
+                          colorPalette={
+                            item.status === "done"      ? "green"
+                            : item.status === "error"   ? "red"
+                            : item.status === "uploading" ? "blue"
+                            : "gray"
+                          }
+                          size="sm"
+                        >
+                          {item.status}
+                        </Badge>
+                      </Flex>
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      {item.status !== "uploading" && item.status !== "done" && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          color="fg.muted"
+                          p={0}
+                          minW="auto"
+                          onClick={() => removeItem(item.id)}
+                        >
+                          <X size={14} />
+                        </Button>
+                      )}
+                    </Table.Cell>
+                  </Table.Row>
+                );
+              })}
+            </Table.Body>
+          </Table.Root>
+
+          {/* Group completeness warnings */}
+          {groups.some((g) => !groupReady(g) && g.audio?.status !== "done") && (
+            <Box px={5} py={3} borderTopWidth="1px" borderColor="border">
+              <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1}>Incomplete groups (need all 4 files):</Text>
+              {groups
+                .filter((g) => !groupReady(g) && g.audio?.status !== "done")
+                .map((g) => (
+                  <Text key={g.stem} fontSize="xs" color="fg.muted">
+                    {g.stem}: missing{" "}
+                    {[
+                      !g.audio          && "audio",
+                      !g.emotion_gender && "emotion_gender JSON",
+                      !g.speaker        && "speaker JSON",
+                      !g.transcription  && "transcription JSON",
+                    ].filter(Boolean).join(", ")}
+                  </Text>
+                ))}
+            </Box>
+          )}
+        </Box>
+      )}
     </Box>
   );
 }
