@@ -51,12 +51,19 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       if (!containerRef.current) return
       let ws: any
       let blobUrl: string | null = null
+      // Prevents the async init from completing after React StrictMode's
+      // first-pass cleanup fires — which would leave a zombie WaveSurfer instance
+      // appended to the container and result in two visible waveforms.
+      let cancelled = false
 
       const init = async () => {
         const WaveSurfer = (await import("wavesurfer.js")).default
 
+        // If cleanup already ran (StrictMode double-invoke), bail out early.
+        if (cancelled || !containerRef.current) return
+
         ws = WaveSurfer.create({
-          container: containerRef.current!,
+          container: containerRef.current,
           waveColor: "#4a5568",
           progressColor: "#3b82f6",
           cursorColor: "#ef4444",
@@ -68,14 +75,17 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
 
         wsRef.current = ws
 
-        // Fetch audio through the axios instance so the JWT header is included.
-        // WaveSurfer's own fetch() call would not carry the Authorization header.
+        // Fetch audio through axios so the JWT Authorization header is included.
+        // WaveSurfer's own internal fetch() would not carry the auth header.
         try {
           const response = await api.get(audioUrl, { responseType: "blob" })
+          if (cancelled) {
+            ws.destroy()
+            return
+          }
           blobUrl = URL.createObjectURL(response.data)
           ws.load(blobUrl)
         } catch {
-          // Surface loading errors as a ready=false state — parent will show skeleton
           return
         }
 
@@ -107,6 +117,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       init()
 
       return () => {
+        cancelled = true
         ws?.destroy()
         wsRef.current = null
         if (blobUrl) URL.revokeObjectURL(blobUrl)
