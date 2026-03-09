@@ -51,11 +51,17 @@ async def update_speaker_segment(
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    # Optimistic locking check
-    client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
-    server_ts = segment.updated_at.replace(tzinfo=timezone.utc) if segment.updated_at.tzinfo is None else segment.updated_at
-    if client_ts < server_ts:
-        raise STALE_ERROR
+    # Optimistic locking — only enforced for label/metadata changes, not time-only (drag) changes.
+    # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
+    has_label_changes = any(
+        getattr(body, f) is not None
+        for f in ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]
+    )
+    if has_label_changes:
+        client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
+        server_ts = segment.updated_at.replace(tzinfo=timezone.utc) if segment.updated_at.tzinfo is None else segment.updated_at
+        if client_ts < server_ts:
+            raise STALE_ERROR
 
     # Standard fields
     for field in ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]:
@@ -115,7 +121,7 @@ async def update_speaker_segment(
     return segment
 
 
-@router.post("/speaker/", response_model=SpeakerSegmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/speaker", response_model=SpeakerSegmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_speaker_segment(
     body: SpeakerSegmentCreate,
     db: AsyncSession = Depends(get_db),
