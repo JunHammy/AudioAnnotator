@@ -46,11 +46,14 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     const containerRef = useRef<HTMLDivElement>(null)
     const wsRef = useRef<any>(null)
     const regionsRef = useRef<any>(null)
+    const onRegionUpdateRef = useRef(onRegionUpdate)
     const [playing, setPlaying] = useState(false)
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
     const [ready, setReady] = useState(false)
     const [muted, setMuted] = useState(false)
+
+    useEffect(() => { onRegionUpdateRef.current = onRegionUpdate }, [onRegionUpdate])
 
     useEffect(() => {
       if (!containerRef.current) return
@@ -124,9 +127,9 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           setCurrentTime(0)
         })
 
-        // Region drag/resize events
+        // Region drag/resize events — use ref so handler always calls latest version
         regions.on("region-updated", (region: any) => {
-          onRegionUpdate?.(region.id, region.start, region.end)
+          onRegionUpdateRef.current?.(region.id, region.start, region.end)
         })
       }
 

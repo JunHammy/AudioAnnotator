@@ -260,6 +260,7 @@ function SegmentEditor({
 }) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [emotion, setEmotion] = useState<string>(
     (selection.segment as Segment).emotion ?? ""
   )
@@ -342,11 +343,16 @@ function SegmentEditor({
 
   const handleDelete = async () => {
     if (!onDelete) return
+    if (!confirmDelete) {
+      setConfirmDelete(true)
+      return
+    }
     setDeleting(true)
     try {
       await onDelete()
     } finally {
       setDeleting(false)
+      setConfirmDelete(false)
     }
   }
 
@@ -579,17 +585,36 @@ function SegmentEditor({
           Save
         </Button>
 
-        {onDelete && (
+        {onDelete && !confirmDelete && (
           <Button
             size="sm"
             colorPalette="red"
             variant="outline"
-            loading={deleting}
             onClick={handleDelete}
           >
             <Trash2 size={14} />
             Delete Segment
           </Button>
+        )}
+        {onDelete && confirmDelete && (
+          <HStack gap={2}>
+            <Button
+              size="sm"
+              colorPalette="red"
+              loading={deleting}
+              onClick={handleDelete}
+            >
+              Yes, Delete
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setConfirmDelete(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+          </HStack>
         )}
       </VStack>
     </Box>
@@ -718,7 +743,7 @@ function AnnotateInner() {
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
-      await api.post("/api/segments/speaker/", {
+      await api.post("/api/segments/speaker", {
         audio_file_id: data.audio_file.id,
         start_time: currentT,
         end_time: currentT + 2.0,
@@ -743,6 +768,37 @@ function AnnotateInner() {
       ToastWizard.standard("success", "Segment deleted")
     } catch {
       ToastWizard.standard("error", "Failed to delete segment")
+    }
+  }
+
+  const addTranscriptionSegment = async () => {
+    if (!data) return
+    setAddingSegment(true)
+    try {
+      const currentT = playerRef.current?.getCurrentTime() ?? 0
+      await api.post("/api/segments/transcription", {
+        audio_file_id: data.audio_file.id,
+        start_time: currentT,
+        end_time: currentT + 2.0,
+        original_text: "",
+      })
+      await load()
+      ToastWizard.standard("success", "Transcription segment added at playhead")
+    } catch {
+      ToastWizard.standard("error", "Failed to add transcription segment")
+    } finally {
+      setAddingSegment(false)
+    }
+  }
+
+  const deleteTranscriptionSegment = async (segmentId: number) => {
+    try {
+      await api.delete(`/api/segments/transcription/${segmentId}`)
+      setSelection(null)
+      await load()
+      ToastWizard.standard("success", "Transcription segment deleted")
+    } catch {
+      ToastWizard.standard("error", "Failed to delete transcription segment")
     }
   }
 
@@ -856,6 +912,19 @@ function AnnotateInner() {
             >
               <Plus size={14} />
               Add Segment
+            </Button>
+          )}
+          {/* Add Transcription Segment — only when annotator has the transcription task */}
+          {hasTask("transcription") && (
+            <Button
+              size="sm"
+              variant="outline"
+              colorPalette="purple"
+              loading={addingSegment}
+              onClick={addTranscriptionSegment}
+            >
+              <Plus size={14} />
+              Add Transcription
             </Button>
           )}
           {data.assignments.map(a => (
@@ -1003,6 +1072,8 @@ function AnnotateInner() {
             onDelete={
               selection.type === "speaker" && hasTask("speaker")
                 ? () => deleteSegment(selection.segment.id)
+                : selection.type === "transcription" && hasTask("transcription")
+                ? () => deleteTranscriptionSegment(selection.segment.id)
                 : undefined
             }
             onTimesChanged={load}

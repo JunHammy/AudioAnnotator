@@ -273,6 +273,13 @@ class TranscriptionSegmentUpdate(BaseModel):
     updated_at:  datetime  # Optimistic locking
 
 
+class TranscriptionSegmentCreate(BaseModel):
+    audio_file_id: int
+    start_time:    float
+    end_time:      float
+    original_text: Optional[str] = None
+
+
 # ─── Bracket Words ───────────────────────────────────────────────────────────
 
 class BracketWordsUpdate(BaseModel):

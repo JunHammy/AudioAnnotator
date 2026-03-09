@@ -11,6 +11,7 @@ from app.schemas.schemas import (
     SpeakerSegmentCreate,
     SpeakerSegmentResponse,
     SpeakerSegmentUpdate,
+    TranscriptionSegmentCreate,
     TranscriptionSegmentResponse,
     TranscriptionSegmentUpdate,
 )
@@ -219,6 +220,65 @@ async def get_transcription_segments(
         .order_by(TranscriptionSegment.start_time)
     )
     return result.scalars().all()
+
+
+@router.post("/transcription", response_model=TranscriptionSegmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_transcription_segment(
+    body: TranscriptionSegmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a new transcription segment. Requires transcription assignment."""
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == body.audio_file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "transcription")
+    )).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have a transcription assignment for this file.")
+
+    new_seg = TranscriptionSegment(
+        audio_file_id=body.audio_file_id,
+        annotator_id=current_user.id,
+        start_time=round(body.start_time, 3),
+        end_time=round(body.end_time, 3),
+        original_text=body.original_text or "",
+    )
+    db.add(new_seg)
+    await db.flush()
+    await db.refresh(new_seg)
+    return new_seg
+
+
+@router.delete("/transcription/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_transcription_segment(
+    segment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a transcription segment. Requires transcription assignment."""
+    segment = (await db.execute(
+        select(TranscriptionSegment).where(TranscriptionSegment.id == segment_id)
+    )).scalar_one_or_none()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == segment.audio_file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "transcription")
+    )).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have a transcription assignment for this file.")
+
+    await db.delete(segment)
+    await db.flush()
 
 
 @router.patch("/transcription/{segment_id}", response_model=TranscriptionSegmentResponse)
