@@ -11,7 +11,7 @@ from app.schemas.schemas import UserCreate, UserResponse, UserUpdate
 router = APIRouter()
 
 
-@router.get("/", response_model=list[UserResponse])
+@router.get("", response_model=list[UserResponse])
 async def list_users(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
@@ -20,7 +20,7 @@ async def list_users(
     return result.scalars().all()
 
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     body: UserCreate,
     db: AsyncSession = Depends(get_db),

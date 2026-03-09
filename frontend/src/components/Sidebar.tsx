@@ -54,7 +54,8 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
     <Flex
       direction="column"
       w="240px"
-      minH="100vh"
+      h="100vh"
+      overflowY="auto"
       bg="bg.subtle"
       borderRightWidth="1px"
       borderColor="border"

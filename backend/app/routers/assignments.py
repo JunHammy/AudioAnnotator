@@ -19,7 +19,7 @@ from app.services.emotion import auto_finalize_emotions
 router = APIRouter()
 
 
-@router.get("/", response_model=list[AssignmentResponse])
+@router.get("", response_model=list[AssignmentResponse])
 async def list_assignments(
     audio_file_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
@@ -34,7 +34,7 @@ async def list_assignments(
     return result.scalars().all()
 
 
-@router.post("/", response_model=AssignmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AssignmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_assignment(
     body: AssignmentCreate,
     db: AsyncSession = Depends(get_db),

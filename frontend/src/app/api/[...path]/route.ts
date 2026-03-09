@@ -6,8 +6,10 @@ const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8000";
 type Params = Promise<{ path: string[] }>;
 
 async function proxy(req: NextRequest, params: Params) {
-  const { path } = await params;
-  const url = new URL(`/api/${path.join("/")}`, BACKEND);
+  // Use the original pathname to preserve trailing slashes exactly as sent by the client.
+  // Re-building from the [...path] array strips trailing slashes, causing 307/404 on FastAPI routes.
+  await params; // still need to await params to satisfy Next.js
+  const url = new URL(req.nextUrl.pathname, BACKEND);
   req.nextUrl.searchParams.forEach((v, k) => url.searchParams.set(k, v));
 
   // Strip hop-by-hop headers that break proxying

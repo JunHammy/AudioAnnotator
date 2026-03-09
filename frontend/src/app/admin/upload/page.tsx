@@ -118,8 +118,9 @@ function statusIcon(s: UploadStatus) {
 function groupItems(items: QueueItem[]): FileGroup[] {
   const map = new Map<string, FileGroup>();
   for (const item of items) {
-    const { type, stem } = detectFileType(item.file.name);
-    item.fileType = type; // update in place
+    const { stem } = detectFileType(item.file.name);
+    // Respect user's manual type override; only fall back to auto-detection
+    const type = item.fileType !== "unknown" ? item.fileType : detectFileType(item.file.name).type;
     if (!map.has(stem)) {
       map.set(stem, { stem, status: "ready" });
     }
@@ -212,12 +213,19 @@ export default function UploadFilesPage() {
       .map((f) => ({
         id:       crypto.randomUUID(),
         file:     f,
-        fileType: "unknown" as FileType,
+        fileType: detectFileType(f.name).type,
         status:   "ready" as UploadStatus,
       }));
+    // Deduplicate audio files by name, but allow multiple JSON files with the same name
+    // (user's data may have same-named JSONs in different type folders)
     setQueue((prev) => {
-      const existingNames = new Set(prev.map((i) => i.file.name));
-      return [...prev, ...newItems.filter((i) => !existingNames.has(i.file.name))];
+      const existingAudioNames = new Set(
+        prev.filter((i) => i.fileType === "audio").map((i) => i.file.name)
+      );
+      return [
+        ...prev,
+        ...newItems.filter((i) => i.fileType !== "audio" || !existingAudioNames.has(i.file.name)),
+      ];
     });
   }
 
@@ -405,8 +413,7 @@ export default function UploadFilesPage() {
             </Table.Header>
             <Table.Body>
               {queue.map((item) => {
-                const detected = detectFileType(item.file.name);
-                const displayType = item.fileType !== "unknown" ? item.fileType : detected.type;
+                const isJson = item.file.name.toLowerCase().endsWith(".json");
                 return (
                   <Table.Row key={item.id} _hover={{ bg: "bg.muted" }}>
                     <Table.Cell px={4} py={2}>
@@ -414,7 +421,7 @@ export default function UploadFilesPage() {
                       {item.error && <Text fontSize="xs" color="red.400" mt={0.5}>{item.error}</Text>}
                     </Table.Cell>
                     <Table.Cell px={4} py={2}>
-                      {displayType === "unknown" ? (
+                      {isJson ? (
                         <Select.Root
                           collection={JSON_TYPE_OPTIONS}
                           value={[item.fileType]}
@@ -423,7 +430,12 @@ export default function UploadFilesPage() {
                         >
                           <Select.HiddenSelect />
                           <Select.Control>
-                            <Select.Trigger bg="bg.muted" borderColor="red.500" color="red.400" minW="140px">
+                            <Select.Trigger
+                              bg="bg.muted"
+                              borderColor={item.fileType === "unknown" ? "red.500" : "border"}
+                              color={item.fileType === "unknown" ? "red.400" : "fg"}
+                              minW="140px"
+                            >
                               <Select.ValueText placeholder="Tag type…" />
                             </Select.Trigger>
                           </Select.Control>
@@ -440,8 +452,8 @@ export default function UploadFilesPage() {
                           </Portal>
                         </Select.Root>
                       ) : (
-                        <Badge colorPalette={typeColor(displayType)} size="sm">
-                          {typeLabel(displayType)}
+                        <Badge colorPalette={typeColor(item.fileType)} size="sm">
+                          {typeLabel(item.fileType)}
                         </Badge>
                       )}
                     </Table.Cell>

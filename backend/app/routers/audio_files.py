@@ -67,7 +67,7 @@ def _best_overlap(seg_start: float, seg_end: float, windows: list) -> dict | Non
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-@router.get("/", response_model=list[AudioFileResponse])
+@router.get("", response_model=list[AudioFileResponse])
 async def list_audio_files(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
@@ -89,7 +89,7 @@ async def get_audio_file(
     return af
 
 
-@router.post("/", response_model=AudioFileResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AudioFileResponse, status_code=status.HTTP_201_CREATED)
 async def upload_audio_file(
     audio:               UploadFile = File(...),
     emotion_gender_json: UploadFile = File(...),

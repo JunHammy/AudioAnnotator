@@ -7,9 +7,9 @@ import { Sidebar } from "@/components/Sidebar";
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard role="admin">
-      <Flex minH="100vh" bg="bg">
+      <Flex h="100vh" overflow="hidden" bg="bg">
         <Sidebar role="admin" />
-        <Box flex={1} overflow="auto">
+        <Box flex={1} overflowY="auto">
           {children}
         </Box>
       </Flex>
