@@ -134,7 +134,7 @@ function groupItems(items: QueueItem[]): FileGroup[] {
 }
 
 function groupReady(g: FileGroup): boolean {
-  return !!(g.audio && g.emotion_gender && g.speaker && g.transcription);
+  return !!g.audio; // Only audio is required; JSONs are optional
 }
 
 // ── Drop Zone ──────────────────────────────────────────────────────────────
@@ -177,7 +177,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
       <Upload size={32} color="var(--chakra-colors-fg-muted)" style={{ margin: "0 auto 12px" }} />
       <Text color="fg" fontWeight="medium" mb={1}>Drag &amp; drop files here</Text>
       <Text fontSize="sm" color="fg.muted" mb={3}>or click to browse</Text>
-      <Text fontSize="xs" color="fg.muted">Accepts: .wav, .mp3 + .json (emotion_gender, speaker, transcription)</Text>
+      <Text fontSize="xs" color="fg.muted">Audio required (.wav/.mp3). Optional: .json files for emotion_gender, speaker, transcription</Text>
     </Box>
   );
 }
@@ -240,7 +240,7 @@ export default function UploadFilesPage() {
   const groups = groupItems(queue);
 
   async function uploadGroup(g: FileGroup) {
-    if (!g.audio || !g.emotion_gender || !g.speaker || !g.transcription) return;
+    if (!g.audio) return;
 
     const updateStatus = (ids: string[], status: UploadStatus, error?: string) => {
       setQueue((prev) => prev.map((i) =>
@@ -248,20 +248,21 @@ export default function UploadFilesPage() {
       ));
     };
 
-    const ids = [g.audio, g.emotion_gender, g.speaker, g.transcription].map((i) => i.id);
+    const ids = [g.audio, g.emotion_gender, g.speaker, g.transcription]
+      .filter(Boolean).map((i) => i!.id);
     updateStatus(ids, "uploading");
 
     const fd = new FormData();
-    fd.append("audio",               g.audio.file);
-    fd.append("emotion_gender_json", g.emotion_gender.file);
-    fd.append("speaker_json",        g.speaker.file);
-    fd.append("transcription_json",  g.transcription.file);
-    fd.append("language",   language[0] ?? "");
-    fd.append("subfolder",  subfolder.trim());
-    fd.append("num_speakers", "1"); // Will be overridden from speaker JSON on backend
+    fd.append("audio", g.audio.file);
+    // Only append JSON files that were provided — all are optional on the backend
+    if (g.emotion_gender) fd.append("emotion_gender_json", g.emotion_gender.file);
+    if (g.speaker)        fd.append("speaker_json",        g.speaker.file);
+    if (g.transcription)  fd.append("transcription_json",  g.transcription.file);
+    fd.append("language",  language[0] ?? "");
+    fd.append("subfolder", subfolder.trim());
 
     try {
-      await api.post("/api/audio-files/", fd, {
+      await api.post("/api/audio-files", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       updateStatus(ids, "done");
@@ -298,7 +299,7 @@ export default function UploadFilesPage() {
   return (
     <Box p={8} maxW="1100px">
       <Heading size="lg" color="fg" mb={1}>Upload Files</Heading>
-      <Text color="fg.muted" mb={6}>Upload audio files with their corresponding JSON annotation files</Text>
+      <Text color="fg.muted" mb={6}>Upload audio files — JSON annotation files are optional. Providing them seeds pre-annotated segments.</Text>
 
       <Grid templateColumns="1fr 280px" gap={6} mb={6}>
         {/* Drop zone */}
@@ -391,10 +392,10 @@ export default function UploadFilesPage() {
         fontSize="xs"
         color="yellow.200"
       >
-        <Text fontWeight="semibold" mb={1}>Preprocessing on upload:</Text>
-        <Text>• speaker_0 → speaker_1 (all labels shifted +1 for 1-based numbering)</Text>
-        <Text>• Timestamps validated and pre-annotated segments seeded from JSON</Text>
-        <Text>• Original JSONs stored verbatim as immutable reference (used for Diff view)</Text>
+        <Text fontWeight="semibold" mb={1}>What happens on upload:</Text>
+        <Text>• Audio-only upload is valid — annotators create segments manually</Text>
+        <Text>• speaker_0 → speaker_1 (labels shifted +1 for 1-based numbering) when speaker JSON provided</Text>
+        <Text>• Segments seeded from JSON if provided; original JSONs stored as immutable reference</Text>
       </Box>
 
       {/* Queue table */}
@@ -496,21 +497,15 @@ export default function UploadFilesPage() {
             </Table.Body>
           </Table.Root>
 
-          {/* Group completeness warnings */}
-          {groups.some((g) => !groupReady(g) && g.audio?.status !== "done") && (
+          {/* Warn about JSON files without a matching audio file */}
+          {groups.some((g) => !g.audio && g.audio?.status !== "done") && (
             <Box px={5} py={3} borderTopWidth="1px" borderColor="border">
-              <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1}>Incomplete groups (need all 4 files):</Text>
+              <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1}>JSON files without matching audio (will not upload):</Text>
               {groups
-                .filter((g) => !groupReady(g) && g.audio?.status !== "done")
+                .filter((g) => !g.audio)
                 .map((g) => (
                   <Text key={g.stem} fontSize="xs" color="fg.muted">
-                    {g.stem}: missing{" "}
-                    {[
-                      !g.audio          && "audio",
-                      !g.emotion_gender && "emotion_gender JSON",
-                      !g.speaker        && "speaker JSON",
-                      !g.transcription  && "transcription JSON",
-                    ].filter(Boolean).join(", ")}
+                    {g.stem}: no audio file found — add the corresponding .wav/.mp3 to upload
                   </Text>
                 ))}
             </Box>

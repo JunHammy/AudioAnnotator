@@ -3,6 +3,7 @@ import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -91,15 +92,20 @@ async def get_audio_file(
 
 @router.post("", response_model=AudioFileResponse, status_code=status.HTTP_201_CREATED)
 async def upload_audio_file(
-    audio:               UploadFile = File(...),
-    emotion_gender_json: UploadFile = File(...),
-    speaker_json:        UploadFile = File(...),
-    transcription_json:  UploadFile = File(...),
-    subfolder:           str        = Form(""),
-    language:            str        = Form(""),
+    audio:               UploadFile          = File(...),
+    emotion_gender_json: Optional[UploadFile] = File(default=None),
+    speaker_json:        Optional[UploadFile] = File(default=None),
+    transcription_json:  Optional[UploadFile] = File(default=None),
+    subfolder:           str                  = Form(""),
+    language:            str                  = Form(""),
     db:    AsyncSession  = Depends(get_db),
     admin: User          = Depends(require_admin),
 ):
+    """
+    Upload an audio file with optional JSON annotation files.
+    Only the audio file is required — JSONs are optional.
+    Providing a subset of JSONs seeds only those segment types.
+    """
     # ── Validate and sanitize filenames / subfolder ───────────────────────────
     audio_name = _safe_name(audio.filename or "", "audio filename")
     if Path(audio_name).suffix.lower() not in _ALLOWED_AUDIO:
@@ -120,11 +126,15 @@ async def upload_audio_file(
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"File '{audio_name}' already exists.")
 
-    # ── Validate JSON uploads are valid JSON ──────────────────────────────────
+    # ── Parse optional JSONs ──────────────────────────────────────────────────
+    eg_data = sp_data = tr_data = None
     try:
-        eg_data  = json.loads(await emotion_gender_json.read())
-        sp_data  = json.loads(await speaker_json.read())
-        tr_data  = json.loads(await transcription_json.read())
+        if emotion_gender_json and emotion_gender_json.filename:
+            eg_data = json.loads(await emotion_gender_json.read())
+        if speaker_json and speaker_json.filename:
+            sp_data = json.loads(await speaker_json.read())
+        if transcription_json and transcription_json.filename:
+            tr_data = json.loads(await transcription_json.read())
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
 
@@ -132,69 +142,86 @@ async def upload_audio_file(
     with dest_path.open("wb") as f:
         shutil.copyfileobj(audio.file, f)
 
-    # ── Parse metadata from speaker JSON ─────────────────────────────────────
-    spk_segs_raw = sp_data.get("speakers", [])
-    num_speakers = sp_data.get("num_speakers") or len({s.get("speaker", "") for s in spk_segs_raw})
-    duration_val = max((s.get("end_time", 0) for s in spk_segs_raw), default=0.0)
-    if not duration_val:
-        emo_wins = list(eg_data.get("predictions", {}).values())
-        if emo_wins:
-            duration_val = max(w.get("end_time", 0) for w in emo_wins)
+    # ── Derive metadata from available JSONs ──────────────────────────────────
+    spk_segs_raw = sp_data.get("speakers", []) if sp_data else []
+
+    num_speakers: Optional[int] = None
+    if sp_data:
+        num_speakers = sp_data.get("num_speakers") or len({s.get("speaker", "") for s in spk_segs_raw}) or None
+        if num_speakers:
+            num_speakers = max(num_speakers, 1)
+
+    duration_val = 0.0
+    if spk_segs_raw:
+        duration_val = max((s.get("end_time", 0) for s in spk_segs_raw), default=0.0)
+    if not duration_val and tr_data:
+        duration_val = max((t.get("end_time", 0) for t in tr_data.get("texts", [])), default=0.0)
+    if not duration_val and eg_data:
+        emo_wins_raw = list(eg_data.get("predictions", {}).values())
+        if emo_wins_raw:
+            duration_val = max(w.get("end_time", 0) for w in emo_wins_raw)
 
     # ── Create AudioFile record ───────────────────────────────────────────────
     db_file = AudioFile(
         filename=audio_name,
         subfolder=safe_subfolder,
         language=language.strip() or None,
-        num_speakers=max(num_speakers, 1),
-        duration=round(duration_val, 2),
+        num_speakers=num_speakers,
+        duration=round(duration_val, 2) if duration_val else None,
         file_path=str(dest_path),
         uploaded_by=admin.id,
     )
     db.add(db_file)
     await db.flush()
 
-    # ── Store immutable original JSONs ────────────────────────────────────────
-    for json_type, data in [("emotion_gender", eg_data), ("speaker", sp_data), ("transcription", tr_data)]:
-        db.add(OriginalJSONStore(audio_file_id=db_file.id, json_type=json_type, data=data))
+    # ── Store immutable original JSONs (only those provided) ─────────────────
+    for json_type, data_val in [
+        ("emotion_gender", eg_data),
+        ("speaker",        sp_data),
+        ("transcription",  tr_data),
+    ]:
+        if data_val is not None:
+            db.add(OriginalJSONStore(audio_file_id=db_file.id, json_type=json_type, data=data_val))
 
-    # ── Seed pre-annotated segments ───────────────────────────────────────────
-    emo_windows = sorted(
-        [
-            {
-                "start_time": float(e.get("start_time", 0)),
-                "end_time":   float(e.get("end_time",   0)),
-                "gender":     e.get("gender", "unk").title(),
-                "emotion":    e.get("emotion", "").title(),
-            }
-            for e in eg_data.get("predictions", {}).values()
-        ],
-        key=lambda w: w["start_time"],
-    )
+    # ── Seed speaker segments (only if speaker JSON provided) ─────────────────
+    if sp_data:
+        emo_windows = sorted(
+            [
+                {
+                    "start_time": float(e.get("start_time", 0)),
+                    "end_time":   float(e.get("end_time",   0)),
+                    "gender":     e.get("gender", "unk").title(),
+                    "emotion":    e.get("emotion", "").title(),
+                }
+                for e in (eg_data.get("predictions", {}).values() if eg_data else [])
+            ],
+            key=lambda w: w["start_time"],
+        )
+        for s in spk_segs_raw:
+            seg_start = float(s.get("start_time", 0))
+            seg_end   = float(s.get("end_time",   0))
+            win = _best_overlap(seg_start, seg_end, emo_windows)
+            db.add(SpeakerSegment(
+                audio_file_id=db_file.id,
+                annotator_id=admin.id,
+                speaker_label=_renumber_speaker(s.get("speaker", "")),
+                start_time=round(seg_start, 3),
+                end_time=round(seg_end, 3),
+                gender=win["gender"] if win else "unk",
+                emotion=win["emotion"] if win else None,
+                source="pre_annotated",
+            ))
 
-    for s in spk_segs_raw:
-        seg_start = float(s.get("start_time", 0))
-        seg_end   = float(s.get("end_time",   0))
-        win = _best_overlap(seg_start, seg_end, emo_windows)
-        db.add(SpeakerSegment(
-            audio_file_id=db_file.id,
-            annotator_id=admin.id,
-            speaker_label=_renumber_speaker(s.get("speaker", "")),
-            start_time=round(seg_start, 3),
-            end_time=round(seg_end, 3),
-            gender=win["gender"] if win else "unk",
-            emotion=win["emotion"] if win else None,
-            source="pre_annotated",
-        ))
-
-    for t in tr_data.get("texts", []):
-        db.add(TranscriptionSegment(
-            audio_file_id=db_file.id,
-            annotator_id=admin.id,
-            start_time=round(float(t.get("start_time", 0)), 3),
-            end_time=round(float(t.get("end_time",   0)), 3),
-            original_text=t.get("text", ""),
-        ))
+    # ── Seed transcription segments (only if transcription JSON provided) ─────
+    if tr_data:
+        for t in tr_data.get("texts", []):
+            db.add(TranscriptionSegment(
+                audio_file_id=db_file.id,
+                annotator_id=admin.id,
+                start_time=round(float(t.get("start_time", 0)), 3),
+                end_time=round(float(t.get("end_time",   0)), 3),
+                original_text=t.get("text", ""),
+            ))
 
     await db.flush()
     await db.refresh(db_file)

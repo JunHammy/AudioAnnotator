@@ -161,6 +161,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   getLabel,
   onSelect,
   trackColor = "bg.subtle",
+  warningCount,
 }: {
   label: string
   segments: T[]
@@ -171,13 +172,21 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   getLabel: (s: T) => string
   onSelect: (s: T) => void
   trackColor?: string
+  warningCount?: number
 }) {
   if (!duration) return null
   return (
     <Box>
-      <Text fontSize="xs" fontWeight="medium" color="fg.muted" mb={1} userSelect="none">
-        {label}
-      </Text>
+      <HStack mb={1} gap={2} align="center">
+        <Text fontSize="xs" fontWeight="medium" color="fg.muted" userSelect="none">
+          {label}
+        </Text>
+        {warningCount != null && warningCount > 0 && (
+          <Badge size="xs" colorPalette="orange">
+            {warningCount} boundary mismatch{warningCount > 1 ? "es" : ""}
+          </Badge>
+        )}
+      </HStack>
       <Box
         position="relative"
         h="32px"
@@ -250,6 +259,8 @@ function SegmentEditor({
   onDelete,
   onTimesChanged,
   playerRef,
+  speakerLabels,
+  getGenderForSpeaker,
 }: {
   selection: Selection
   onClose: () => void
@@ -257,10 +268,14 @@ function SegmentEditor({
   onDelete?: () => Promise<void>
   onTimesChanged?: () => void
   playerRef: React.RefObject<WaveformPlayerRef | null>
+  speakerLabels?: string[]
+  getGenderForSpeaker?: (label: string) => string
 }) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [addingSpeaker, setAddingSpeaker] = useState(false)
+  const [newSpeakerInput, setNewSpeakerInput] = useState("")
   const [emotion, setEmotion] = useState<string>(
     (selection.segment as Segment).emotion ?? ""
   )
@@ -477,30 +492,91 @@ function SegmentEditor({
 
             <Field.Root>
               <Field.Label fontSize="xs">Speaker Label</Field.Label>
-              <Select.Root
-                collection={createListCollection({
-                  items: Array.from({ length: 10 }, (_, i) => ({
-                    label: `speaker_${i + 1}`,
-                    value: `speaker_${i + 1}`,
-                  })),
-                })}
-                size="sm"
-                value={speakerLabel ? [speakerLabel] : []}
-                onValueChange={({ value }) => setSpeakerLabel(value[0] ?? "")}
-              >
-                <Select.Trigger>
-                  <Select.ValueText placeholder="Select speaker…" />
-                </Select.Trigger>
-                <Select.Positioner>
-                  <Select.Content>
-                    {Array.from({ length: 10 }, (_, i) => `speaker_${i + 1}`).map(v => (
-                      <Select.Item key={v} item={{ label: v, value: v }}>
-                        {v}
+              {addingSpeaker ? (
+                <HStack gap={1}>
+                  <Input
+                    size="sm"
+                    placeholder="e.g. speaker_3"
+                    value={newSpeakerInput}
+                    onChange={e => setNewSpeakerInput(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === "Enter" && newSpeakerInput.trim()) {
+                        setSpeakerLabel(newSpeakerInput.trim())
+                        setAddingSpeaker(false)
+                        setNewSpeakerInput("")
+                      }
+                      if (e.key === "Escape") { setAddingSpeaker(false); setNewSpeakerInput("") }
+                    }}
+                    autoFocus
+                  />
+                  <Button
+                    size="sm"
+                    colorPalette="teal"
+                    disabled={!newSpeakerInput.trim()}
+                    onClick={() => {
+                      if (newSpeakerInput.trim()) {
+                        setSpeakerLabel(newSpeakerInput.trim())
+                        setAddingSpeaker(false)
+                        setNewSpeakerInput("")
+                      }
+                    }}
+                  >
+                    Add
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setAddingSpeaker(false); setNewSpeakerInput("") }}>
+                    ✕
+                  </Button>
+                </HStack>
+              ) : (
+                <Select.Root
+                  collection={createListCollection({
+                    items: [
+                      ...(speakerLabels ?? []).map(l => ({ label: l, value: l })),
+                      // Include current label if it's not in the list (manually typed)
+                      ...(speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
+                        ? [{ label: speakerLabel, value: speakerLabel }]
+                        : []),
+                      { label: "+ Add new speaker", value: "__add_new__" },
+                    ],
+                  })}
+                  size="sm"
+                  value={speakerLabel ? [speakerLabel] : []}
+                  onValueChange={({ value }) => {
+                    const v = value[0] ?? ""
+                    if (v === "__add_new__") {
+                      setAddingSpeaker(true)
+                      return
+                    }
+                    setSpeakerLabel(v)
+                    // Auto-fill gender from known speaker
+                    if (getGenderForSpeaker) {
+                      const known = getGenderForSpeaker(v)
+                      if (known && known !== "unk") setGender(known)
+                    }
+                  }}
+                >
+                  <Select.Trigger>
+                    <Select.ValueText placeholder="Select speaker…" />
+                  </Select.Trigger>
+                  <Select.Positioner>
+                    <Select.Content>
+                      {(speakerLabels ?? []).map(v => (
+                        <Select.Item key={v} item={{ label: v, value: v }}>
+                          {v}
+                        </Select.Item>
+                      ))}
+                      {speakerLabel && !(speakerLabels ?? []).includes(speakerLabel) && (
+                        <Select.Item item={{ label: speakerLabel, value: speakerLabel }}>
+                          {speakerLabel}
+                        </Select.Item>
+                      )}
+                      <Select.Item item={{ label: "+ Add new speaker", value: "__add_new__" }}>
+                        + Add new speaker
                       </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Positioner>
-              </Select.Root>
+                    </Select.Content>
+                  </Select.Positioner>
+                </Select.Root>
+              )}
             </Field.Root>
 
             <Field.Root>
@@ -667,6 +743,63 @@ function AnnotateInner() {
     [data]
   )
 
+  // Unique speaker labels for this file (derived from current speaker segments)
+  const speakerLabels = useMemo(() => {
+    if (!data) return []
+    return [...new Set(
+      data.speaker_segments.map(s => s.speaker_label).filter(Boolean) as string[]
+    )]
+  }, [data])
+
+  // Look up the known (non-unk) gender for a given speaker label
+  const getGenderForSpeaker = useCallback((label: string): string => {
+    const seg = data?.speaker_segments.find(
+      s => s.speaker_label === label && s.gender && s.gender !== "unk"
+    )
+    return seg?.gender ?? "unk"
+  }, [data])
+
+  // Propagate a gender change to all other segments with the same speaker_label
+  const propagateGender = useCallback(async (speakerLabel: string, gender: string, excludeId: number) => {
+    if (!data) return
+    const targets = data.speaker_segments.filter(
+      s => s.speaker_label === speakerLabel && s.id !== excludeId && s.gender !== gender
+    )
+    if (!targets.length) return
+    try {
+      await Promise.all(targets.map(s =>
+        api.patch(`/api/segments/speaker/${s.id}`, { gender, updated_at: s.updated_at })
+      ))
+      setData(prev => prev ? {
+        ...prev,
+        speaker_segments: prev.speaker_segments.map(s =>
+          s.speaker_label === speakerLabel && s.id !== excludeId ? { ...s, gender } : s
+        ),
+      } : prev)
+    } catch {
+      // Non-blocking — main save already succeeded
+    }
+  }, [data])
+
+  // Detect boundary mismatches between speaker and transcription segments
+  const segmentMismatches = useMemo(() => {
+    if (!data) return { speaker: 0, transcription: 0 }
+    const transBounds = new Set(
+      data.transcription_segments.map(t => `${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)
+    )
+    const spkBounds = new Set(
+      data.speaker_segments.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`)
+    )
+    return {
+      speaker: data.speaker_segments.filter(
+        s => !transBounds.has(`${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`)
+      ).length,
+      transcription: data.transcription_segments.filter(
+        t => !spkBounds.has(`${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)
+      ).length,
+    }
+  }, [data])
+
   // Populate WaveSurfer regions whenever speaker segments or waveform readiness change
   useEffect(() => {
     if (!waveformReady || !data || !playerRef.current || !isSpeakerAnnotator) return
@@ -705,6 +838,9 @@ function AnnotateInner() {
   )
 
   const handleSaved = (type: SelectionType, updated: Segment | TranscriptSegment) => {
+    // Capture old segment before state update (for gender propagation check)
+    const oldSeg = type === "speaker" ? data?.speaker_segments.find(s => s.id === updated.id) : null
+
     setData(prev => {
       if (!prev) return prev
       if (type === "emotion") {
@@ -730,12 +866,26 @@ function AnnotateInner() {
         }
       }
     })
+
     // Update selection's updated_at to prevent stale optimistic-lock errors
     setSelection(prev =>
       prev?.segment.id === updated.id
         ? { ...prev, segment: { ...prev.segment, updated_at: updated.updated_at } }
         : prev
     )
+
+    // Auto-propagate gender to other segments with the same speaker_label
+    if (type === "speaker" && oldSeg) {
+      const updatedSeg = updated as Segment
+      if (
+        oldSeg.gender !== updatedSeg.gender &&
+        updatedSeg.speaker_label &&
+        updatedSeg.gender &&
+        updatedSeg.gender !== "unk"
+      ) {
+        propagateGender(updatedSeg.speaker_label, updatedSeg.gender, updatedSeg.id)
+      }
+    }
   }
 
   const addSegment = async () => {
@@ -743,12 +893,15 @@ function AnnotateInner() {
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
+      // Default to speaker_1; pre-fill its known gender if available
+      const defaultLabel = speakerLabels[0] ?? "speaker_1"
+      const defaultGender = getGenderForSpeaker(defaultLabel)
       await api.post("/api/segments/speaker", {
         audio_file_id: data.audio_file.id,
         start_time: currentT,
         end_time: currentT + 2.0,
-        speaker_label: "speaker_1",
-        gender: "unk",
+        speaker_label: defaultLabel,
+        gender: defaultGender,
       })
       // Reload to get the new segment + matching transcription segment
       await load()
@@ -1001,6 +1154,7 @@ function AnnotateInner() {
                   getColor={(s: Segment) => speakerColor(s.speaker_label)}
                   getLabel={(s: Segment) => s.speaker_label ?? "?"}
                   onSelect={s => setSelection({ type: "speaker", segment: s })}
+                  warningCount={segmentMismatches.speaker}
                 />
               )}
 
@@ -1046,6 +1200,7 @@ function AnnotateInner() {
                     s.edited_text ?? s.original_text ?? "—"
                   }
                   onSelect={s => setSelection({ type: "transcription", segment: s })}
+                  warningCount={segmentMismatches.transcription}
                 />
               )}
             </VStack>
@@ -1078,6 +1233,8 @@ function AnnotateInner() {
             }
             onTimesChanged={load}
             playerRef={playerRef}
+            speakerLabels={speakerLabels}
+            getGenderForSpeaker={getGenderForSpeaker}
           />
         )}
       </Box>
