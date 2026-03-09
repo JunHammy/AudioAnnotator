@@ -1,13 +1,53 @@
-from fastapi import APIRouter, Depends
+import json
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, distinct, select, case
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
 from app.models.models import Assignment, AudioFile, SpeakerSegment, User
+from app.schemas.schemas import BracketWordsUpdate
+
+# config/bracket_words.json is at repo root (4 levels up from this file)
+_BRACKET_WORDS_PATH = (
+    Path(__file__).parent.parent.parent.parent / "config" / "bracket_words.json"
+)
 
 router = APIRouter()
 
+
+# ─── Bracket Words ────────────────────────────────────────────────────────────
+
+@router.get("/bracket-words")
+async def get_bracket_words(_admin: User = Depends(require_admin)):
+    if not _BRACKET_WORDS_PATH.is_file():
+        return {"parentheses": [], "square_brackets": []}
+    return json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+
+
+@router.patch("/bracket-words")
+async def update_bracket_words(
+    body: BracketWordsUpdate,
+    _admin: User = Depends(require_admin),
+):
+    if _BRACKET_WORDS_PATH.is_file():
+        data = json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+    else:
+        data = {"parentheses": [], "square_brackets": []}
+
+    if body.parentheses is not None:
+        # Normalise: strip whitespace, deduplicate, lowercase
+        data["parentheses"] = sorted({w.strip().lower() for w in body.parentheses if w.strip()})
+    if body.square_brackets is not None:
+        data["square_brackets"] = sorted({w.strip().lower() for w in body.square_brackets if w.strip()})
+
+    _BRACKET_WORDS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
+# ─── Dashboard ───────────────────────────────────────────────────────────────
 
 @router.get("/dashboard")
 async def get_dashboard(

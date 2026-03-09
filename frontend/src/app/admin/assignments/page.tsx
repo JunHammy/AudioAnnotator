@@ -5,16 +5,17 @@ import {
   Badge,
   Box,
   Button,
-  Checkbox,
   Flex,
   Heading,
+  HStack,
+  IconButton,
   Select,
   Table,
   Text,
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { Plus, Trash2, AlertTriangle } from "lucide-react";
+import { AlertTriangle, Lock, Plus, Trash2, Unlock } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -27,6 +28,9 @@ interface AudioFile {
   language: string | null;
   num_speakers: number | null;
   duration: number | null;
+  collaborative_locked_speaker: boolean;
+  collaborative_locked_gender: boolean;
+  collaborative_locked_transcription: boolean;
 }
 
 interface User {
@@ -47,6 +51,23 @@ interface Assignment {
 const TASK_TYPES = ["emotion", "gender", "speaker", "transcription"] as const;
 type TaskType = typeof TASK_TYPES[number];
 
+// ── Valid task combinations (from supervisor spec) ─────────────────────────
+
+const VALID_COMBOS = [
+  { label: "Speaker only",                       tasks: ["speaker"] },
+  { label: "Speaker + Gender",                   tasks: ["speaker", "gender"] },
+  { label: "Speaker + Transcription",            tasks: ["speaker", "transcription"] },
+  { label: "Speaker + Gender + Transcription",   tasks: ["speaker", "gender", "transcription"] },
+  { label: "Emotion only",                       tasks: ["emotion"] },
+  { label: "Gender only",                        tasks: ["gender"] },
+  { label: "Gender + Transcription",             tasks: ["gender", "transcription"] },
+  { label: "Transcription only",                 tasks: ["transcription"] },
+] as const;
+
+const comboCollection = createListCollection({
+  items: VALID_COMBOS.map(c => ({ label: c.label, value: c.label })),
+});
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function statusBadge(status: string) {
@@ -54,7 +75,6 @@ function statusBadge(status: string) {
   return <Badge colorPalette={map[status] ?? "gray"} size="sm">{status.replace("_", " ")}</Badge>;
 }
 
-// Group assignments by annotator for the right panel
 function groupByAnnotator(assignments: Assignment[]): Map<number, Record<TaskType, Assignment | null>> {
   const map = new Map<number, Record<TaskType, Assignment | null>>();
   for (const a of assignments) {
@@ -66,14 +86,6 @@ function groupByAnnotator(assignments: Assignment[]): Map<number, Record<TaskTyp
   return map;
 }
 
-// Coverage flags  E G S T
-function coverageFlags(assignments: Assignment[]): string {
-  const types = new Set(assignments.map((a) => a.task_type));
-  return ["emotion", "gender", "speaker", "transcription"]
-    .map((t) => (types.has(t) ? t[0].toUpperCase() : "·"))
-    .join(" ");
-}
-
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function AssignTasksPage() {
@@ -83,10 +95,11 @@ export default function AssignTasksPage() {
   const [assignments,  setAssignments]  = useState<Assignment[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
+  const [locking,      setLocking]      = useState<Record<string, boolean>>({});
 
-  // New annotator selector
+  // New assignment form state
   const [newAnnotatorId, setNewAnnotatorId] = useState<string[]>([]);
-  const [newTasks,       setNewTasks]       = useState<Set<TaskType>>(new Set(["emotion"]));
+  const [newComboLabel,  setNewComboLabel]  = useState<string[]>([]);
 
   useEffect(() => {
     Promise.all([api.get("/api/audio-files/"), api.get("/api/users/")])
@@ -113,33 +126,30 @@ export default function AssignTasksPage() {
       .map((u) => ({ label: u.username, value: String(u.id) })),
   });
 
+  // Derive selected combo's task list
+  const selectedCombo = VALID_COMBOS.find(c => c.label === newComboLabel[0]);
+  const selectedTasks = selectedCombo ? [...selectedCombo.tasks] : [];
+  const emotionSelected = selectedTasks.includes("emotion");
+  const emotionBlocked = emotionSelected && !selectedFile?.collaborative_locked_speaker;
+
   async function addAnnotator() {
-    if (!selectedFile || !newAnnotatorId[0] || newTasks.size === 0) return;
+    if (!selectedFile || !newAnnotatorId[0] || selectedTasks.length === 0 || emotionBlocked) return;
     setSaving(true);
-    const tasks = [...newTasks];
     try {
-      const results = await Promise.all(
-        tasks.map((task_type) =>
-          api.post("/api/assignments/", {
-            audio_file_id: selectedFile.id,
-            annotator_id: parseInt(newAnnotatorId[0]),
-            task_type,
-          }).catch((e) => {
-            // 400 = already exists, skip silently
-            if (e?.response?.status !== 400) throw e;
-            return null;
-          })
-        )
-      );
-      const created = results.filter(Boolean).map((r) => r!.data);
-      if (created.length > 0) {
-        setAssignments((prev) => [...prev, ...created]);
-        ToastWizard.standard("success", "Annotator assigned", `${tasks.join(", ")} tasks assigned.`, 3000, true);
-      }
+      const res = await api.post("/api/assignments/batch", {
+        audio_file_id: selectedFile.id,
+        annotator_id: parseInt(newAnnotatorId[0]),
+        task_types: selectedTasks,
+      });
+      // Fetch fresh assignments to reflect any skipped duplicates
+      const fresh = await api.get(`/api/assignments/?audio_file_id=${selectedFile.id}`);
+      setAssignments(fresh.data);
+      ToastWizard.standard("success", "Annotator assigned", `${res.data.length} new task(s) assigned.`, 3000, true);
       setNewAnnotatorId([]);
-      setNewTasks(new Set(["emotion"]));
-    } catch {
-      ToastWizard.standard("error", "Assignment failed", "Could not create assignment.", 3000, true);
+      setNewComboLabel([]);
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      ToastWizard.standard("error", "Assignment failed", msg ?? "Could not create assignment.", 3000, true);
     } finally {
       setSaving(false);
     }
@@ -155,12 +165,28 @@ export default function AssignTasksPage() {
     }
   }
 
-  function toggleNewTask(t: TaskType) {
-    setNewTasks((prev) => {
-      const next = new Set(prev);
-      if (next.has(t)) next.delete(t); else next.add(t);
-      return next;
-    });
+  async function toggleLock(taskType: "speaker" | "gender" | "transcription", currentLocked: boolean) {
+    if (!selectedFile) return;
+    const key = `${selectedFile.id}_${taskType}`;
+    setLocking(l => ({ ...l, [key]: true }));
+    try {
+      const res = await api.patch(`/api/audio-files/${selectedFile.id}/lock`, {
+        task_type: taskType,
+        locked: !currentLocked,
+      });
+      const updated: AudioFile = { ...selectedFile, ...res.data };
+      setSelectedFile(updated);
+      setAudioFiles(prev => prev.map(f => f.id === updated.id ? updated : f));
+      ToastWizard.standard(
+        "success",
+        `${taskType} ${!currentLocked ? "locked" : "unlocked"}`,
+        undefined, 2000, true,
+      );
+    } catch {
+      ToastWizard.standard("error", "Lock toggle failed");
+    } finally {
+      setLocking(l => ({ ...l, [key]: false }));
+    }
   }
 
   // Coverage summary per task type
@@ -168,6 +194,12 @@ export default function AssignTasksPage() {
     .filter((a) => a.task_type === "emotion")
     .map((a) => users.find((u) => u.id === a.annotator_id)?.username)
     .filter(Boolean);
+
+  const COLLAB_TASKS = [
+    { key: "speaker",       label: "Spk", field: "collaborative_locked_speaker" as const },
+    { key: "gender",        label: "Gnd", field: "collaborative_locked_gender" as const },
+    { key: "transcription", label: "Trn", field: "collaborative_locked_transcription" as const },
+  ] as const;
 
   return (
     <Box p={8} h="full">
@@ -228,15 +260,37 @@ export default function AssignTasksPage() {
           {/* ── Right: assignment panel ──────────────────────────── */}
           {selectedFile ? (
             <Box flex={1} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" h="full">
-              {/* File info bar */}
+              {/* File info bar + lock toggles */}
               <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
-                <Flex gap={4} align="center">
+                <Flex gap={4} align="center" wrap="wrap">
                   <Text fontSize="sm" fontWeight="semibold" color="fg" fontFamily="mono">
                     {selectedFile.filename.replace(/\.[^.]+$/, "")}
                   </Text>
                   <Badge colorPalette="blue" size="sm">{selectedFile.language ?? "—"}</Badge>
                   <Text fontSize="xs" color="fg.muted">{selectedFile.duration?.toFixed(1)}s</Text>
                   <Text fontSize="xs" color="fg.muted">{selectedFile.num_speakers} speakers</Text>
+                  {/* Quick lock buttons */}
+                  <HStack ml="auto" gap={1}>
+                    {COLLAB_TASKS.map(({ key, label, field }) => {
+                      const isLocked = selectedFile[field];
+                      const lockKey = `${selectedFile.id}_${key}`;
+                      return (
+                        <IconButton
+                          key={key}
+                          aria-label={`${isLocked ? "Unlock" : "Lock"} ${key}`}
+                          size="xs"
+                          variant={isLocked ? "solid" : "outline"}
+                          colorPalette={isLocked ? "orange" : "gray"}
+                          loading={locking[lockKey]}
+                          onClick={() => toggleLock(key, isLocked)}
+                          title={`${isLocked ? "Unlock" : "Lock"} ${key} task`}
+                        >
+                          {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
+                          <Text fontSize="9px" ml="1px">{label}</Text>
+                        </IconButton>
+                      );
+                    })}
+                  </HStack>
                 </Flex>
               </Box>
 
@@ -308,7 +362,8 @@ export default function AssignTasksPage() {
                 <Box borderWidth="1px" borderColor="border" borderStyle="dashed" rounded="md" p={4} mb={5}>
                   <Text fontSize="sm" fontWeight="semibold" color="fg" mb={3}>Add Annotator</Text>
                   <Flex gap={3} align="end" wrap="wrap">
-                    <Box flex={1} minW="180px">
+                    {/* Annotator picker */}
+                    <Box flex={1} minW="160px">
                       <Text fontSize="xs" color="fg.muted" mb={1}>Annotator</Text>
                       <Select.Root
                         collection={annotatorOptions}
@@ -335,34 +390,57 @@ export default function AssignTasksPage() {
                         </Portal>
                       </Select.Root>
                     </Box>
-                    <Box>
-                      <Text fontSize="xs" color="fg.muted" mb={1}>Task Types</Text>
-                      <Flex gap={2}>
-                        {TASK_TYPES.map((t) => (
-                          <Checkbox.Root
-                            key={t}
-                            checked={newTasks.has(t)}
-                            onCheckedChange={() => toggleNewTask(t)}
-                            size="sm"
-                          >
-                            <Checkbox.HiddenInput />
-                            <Checkbox.Control borderColor="border" />
-                            <Checkbox.Label fontSize="xs" color="fg" textTransform="capitalize">{t}</Checkbox.Label>
-                          </Checkbox.Root>
-                        ))}
-                      </Flex>
+
+                    {/* Task combo picker */}
+                    <Box flex={1} minW="220px">
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Task Combination</Text>
+                      <Select.Root
+                        collection={comboCollection}
+                        value={newComboLabel}
+                        onValueChange={(d) => setNewComboLabel(d.value)}
+                        size="sm"
+                      >
+                        <Select.HiddenSelect />
+                        <Select.Control>
+                          <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
+                            <Select.ValueText placeholder="Select task combo…" />
+                          </Select.Trigger>
+                        </Select.Control>
+                        <Portal>
+                          <Select.Positioner>
+                            <Select.Content bg="bg.subtle" borderColor="border">
+                              {comboCollection.items.map((item) => (
+                                <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                                  {item.label}
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Portal>
+                      </Select.Root>
                     </Box>
+
                     <Button
                       colorPalette="blue"
                       size="sm"
                       loading={saving}
-                      disabled={!newAnnotatorId[0] || newTasks.size === 0}
+                      disabled={!newAnnotatorId[0] || selectedTasks.length === 0 || emotionBlocked}
                       onClick={addAnnotator}
                     >
                       <Plus size={14} />
                       Add
                     </Button>
                   </Flex>
+
+                  {/* Inline warning when emotion is blocked */}
+                  {emotionBlocked && (
+                    <Flex align="center" gap={2} mt={3} px={3} py={2} rounded="md" bg="orange.900" borderWidth="1px" borderColor="orange.700">
+                      <AlertTriangle size={14} color="var(--chakra-colors-orange-400)" />
+                      <Text fontSize="xs" color="orange.300">
+                        Emotion tasks require speaker segments to be locked first. Lock the speaker task above.
+                      </Text>
+                    </Flex>
+                  )}
                 </Box>
 
                 {/* Coverage summary + warnings */}
@@ -384,38 +462,10 @@ export default function AssignTasksPage() {
                   })}
 
                   {emotionAnnotators.length < 2 && emotionAnnotators.length > 0 && (
-                    <Flex
-                      align="center"
-                      gap={2}
-                      mt={3}
-                      px={3}
-                      py={2}
-                      rounded="md"
-                      bg="red.900"
-                      borderWidth="1px"
-                      borderColor="red.700"
-                    >
+                    <Flex align="center" gap={2} mt={3} px={3} py={2} rounded="md" bg="red.900" borderWidth="1px" borderColor="red.700">
                       <AlertTriangle size={14} color="var(--chakra-colors-red-400)" />
                       <Text fontSize="xs" color="red.300">
                         Emotion has only {emotionAnnotators.length} annotator — 3+ recommended for reliable comparison.
-                      </Text>
-                    </Flex>
-                  )}
-
-                  {emotionAnnotators.length === 0 && (
-                    <Flex
-                      align="center"
-                      gap={2}
-                      mt={3}
-                      px={3}
-                      py={2}
-                      rounded="md"
-                      bg="blue.900"
-                      borderWidth="1px"
-                      borderColor="blue.700"
-                    >
-                      <Text fontSize="xs" color="blue.300">
-                        Collaborative tasks (Gender / Speaker / Transcription): 1 annotator is sufficient.
                       </Text>
                     </Flex>
                   )}

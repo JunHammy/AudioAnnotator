@@ -124,6 +124,18 @@ class AudioFileLockUpdate(BaseModel):
 
 # ─── Assignments ─────────────────────────────────────────────────────────────
 
+_VALID_TASK_COMBOS: set[frozenset] = {
+    frozenset(["speaker"]),
+    frozenset(["speaker", "gender"]),
+    frozenset(["speaker", "transcription"]),
+    frozenset(["speaker", "gender", "transcription"]),
+    frozenset(["emotion"]),
+    frozenset(["gender"]),
+    frozenset(["gender", "transcription"]),
+    frozenset(["transcription"]),
+}
+
+
 class AssignmentCreate(BaseModel):
     audio_file_id: int
     annotator_id:  int
@@ -135,6 +147,26 @@ class AssignmentCreate(BaseModel):
         if v not in _VALID_TASK_TYPES:
             raise ValueError(f"task_type must be one of: {sorted(_VALID_TASK_TYPES)}")
         return v
+
+
+class AssignmentBatchCreate(BaseModel):
+    audio_file_id: int
+    annotator_id:  int
+    task_types:    list[str]
+
+    @field_validator("task_types")
+    @classmethod
+    def validate_combo(cls, v: list[str]) -> list[str]:
+        combo = frozenset(v)
+        if not combo:
+            raise ValueError("task_types cannot be empty.")
+        if combo not in _VALID_TASK_COMBOS:
+            raise ValueError(
+                f"Invalid task combination {sorted(v)}. "
+                "Emotion cannot be combined with speaker. "
+                "Valid combos: speaker[+gender][+transcription] or (after speaker locked) emotion|gender|transcription[+gender]."
+            )
+        return list(combo)
 
 
 class AssignmentResponse(BaseModel):
@@ -187,6 +219,8 @@ class SpeakerSegmentUpdate(BaseModel):
     emotion_other: Optional[str]   = None
     notes:         Optional[str]   = None
     is_ambiguous:  Optional[bool]  = None
+    start_time:    Optional[float] = None   # time editing (pre_annotated only)
+    end_time:      Optional[float] = None   # time editing (pre_annotated only)
     updated_at:    datetime  # Optimistic locking: client sends last-known updated_at
 
     @field_validator("gender")
@@ -201,6 +235,21 @@ class SpeakerSegmentUpdate(BaseModel):
     def validate_emotion(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and v not in _VALID_EMOTIONS:
             raise ValueError(f"emotion must be one of: {sorted(_VALID_EMOTIONS)}")
+        return v
+
+
+class SpeakerSegmentCreate(BaseModel):
+    audio_file_id: int
+    start_time:    float
+    end_time:      float
+    speaker_label: Optional[str] = None
+    gender:        Optional[str] = None
+
+    @field_validator("gender")
+    @classmethod
+    def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_GENDERS:
+            raise ValueError(f"gender must be one of: {sorted(_VALID_GENDERS)}")
         return v
 
 
@@ -222,6 +271,13 @@ class TranscriptionSegmentUpdate(BaseModel):
     edited_text: Optional[str] = None
     notes:       Optional[str] = None
     updated_at:  datetime  # Optimistic locking
+
+
+# ─── Bracket Words ───────────────────────────────────────────────────────────
+
+class BracketWordsUpdate(BaseModel):
+    parentheses:    Optional[list[str]] = None
+    square_brackets: Optional[list[str]] = None
 
 
 # ─── Final Annotations ───────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import {
   LogOut,
   Mic2,
   ListTodo,
+  Tag,
   Upload,
   Users,
 } from "lucide-react";
@@ -23,11 +24,12 @@ interface NavItem {
 }
 
 const ADMIN_NAV: NavItem[] = [
-  { label: "Dashboard",          href: "/admin",               icon: <BarChart2   size={18} /> },
-  { label: "Upload Files",        href: "/admin/upload",        icon: <Upload      size={18} /> },
-  { label: "Manage Annotators",   href: "/admin/annotators",    icon: <Users       size={18} /> },
-  { label: "Assign Tasks",        href: "/admin/assignments",   icon: <ClipboardList size={18} /> },
-  { label: "Review & Finalize",   href: "/admin/review",        icon: <CheckSquare size={18} /> },
+  { label: "Dashboard",          href: "/admin",                    icon: <BarChart2     size={18} /> },
+  { label: "Upload Files",        href: "/admin/upload",             icon: <Upload        size={18} /> },
+  { label: "Manage Annotators",   href: "/admin/annotators",         icon: <Users         size={18} /> },
+  { label: "Assign Tasks",        href: "/admin/assignments",        icon: <ClipboardList size={18} /> },
+  { label: "Review & Finalize",   href: "/admin/review",             icon: <CheckSquare   size={18} /> },
+  { label: "Bracket Words",       href: "/admin/bracket-words",      icon: <Tag           size={18} /> },
 ];
 
 const ANNOTATOR_NAV: NavItem[] = [

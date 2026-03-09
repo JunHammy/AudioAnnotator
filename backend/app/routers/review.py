@@ -27,38 +27,8 @@ router = APIRouter()
 
 _VALID_COLLAB = {"speaker", "gender", "transcription"}
 
-
-# ─── Algorithm ────────────────────────────────────────────────────────────────
-
-def _compute_tier(annotations: list[dict]) -> dict:
-    """
-    Returns: {tier: 1|2|3, winning_label: str|None, confidence: float}
-    Tier 1 = unanimous (all annotators agree)
-    Tier 2 = weighted confidence of winning label >= 0.65
-    Tier 3 = manual review required
-    """
-    if not annotations:
-        return {"tier": 3, "winning_label": None, "confidence": 0.0}
-
-    total_trust = sum(a["trust_score"] for a in annotations)
-    if not total_trust:
-        total_trust = len(annotations)
-
-    label_scores: dict[str, float] = {}
-    for a in annotations:
-        label = a["emotion"] or "Neutral"
-        weight = a["trust_score"] if a["trust_score"] else 1.0
-        label_scores[label] = label_scores.get(label, 0.0) + weight
-
-    best_label = max(label_scores, key=lambda k: label_scores[k])
-    confidence = label_scores[best_label] / total_trust
-
-    unique_emotions = {a["emotion"] for a in annotations}
-    if len(unique_emotions) == 1:
-        return {"tier": 1, "winning_label": best_label, "confidence": 1.0}
-    if confidence >= 0.65:
-        return {"tier": 2, "winning_label": best_label, "confidence": round(confidence, 3)}
-    return {"tier": 3, "winning_label": best_label, "confidence": round(confidence, 3)}
+# Algorithm lives in the shared service module
+from app.services.emotion import compute_tier as _compute_tier
 
 
 # ─── File listing ──────────────────────────────────────────────────────────────

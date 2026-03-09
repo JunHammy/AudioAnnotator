@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -6,8 +7,14 @@ from sqlalchemy import select
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.database import get_db
-from app.models.models import Assignment, User
-from app.schemas.schemas import AssignmentCreate, AssignmentResponse, AssignmentStatusUpdate
+from app.models.models import Assignment, AudioFile, User
+from app.schemas.schemas import (
+    AssignmentBatchCreate,
+    AssignmentCreate,
+    AssignmentResponse,
+    AssignmentStatusUpdate,
+)
+from app.services.emotion import auto_finalize_emotions
 
 router = APIRouter()
 
@@ -49,6 +56,57 @@ async def create_assignment(
     return assignment
 
 
+@router.post("/batch", response_model=list[AssignmentResponse], status_code=status.HTTP_201_CREATED)
+async def create_assignment_batch(
+    body: AssignmentBatchCreate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """
+    Create multiple assignments for one annotator+file in a validated combination.
+    Enforces: emotion requires speaker to be locked first.
+    Silently skips task types that are already assigned.
+    """
+    if "emotion" in body.task_types:
+        af = (await db.execute(
+            select(AudioFile).where(AudioFile.id == body.audio_file_id)
+        )).scalar_one_or_none()
+        if not af:
+            raise HTTPException(status_code=404, detail="Audio file not found")
+        if not af.collaborative_locked_speaker:
+            raise HTTPException(
+                status_code=400,
+                detail="Speaker annotation must be finalized (locked) before assigning emotion tasks.",
+            )
+
+    created = []
+    for task_type in body.task_types:
+        existing = (await db.execute(
+            select(Assignment).where(
+                Assignment.audio_file_id == body.audio_file_id,
+                Assignment.annotator_id == body.annotator_id,
+                Assignment.task_type == task_type,
+            )
+        )).scalar_one_or_none()
+        if existing:
+            continue  # skip already-assigned silently
+
+        a = Assignment(
+            audio_file_id=body.audio_file_id,
+            annotator_id=body.annotator_id,
+            task_type=task_type,
+        )
+        db.add(a)
+        created.append(a)
+
+    if created:
+        await db.flush()
+        for a in created:
+            await db.refresh(a)
+
+    return created
+
+
 @router.delete("/{assignment_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_assignment(
     assignment_id: int,
@@ -77,13 +135,42 @@ async def update_assignment_status(
     if current_user.role == "annotator" and assignment.annotator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    if body.status not in ("pending", "in_progress", "completed"):
-        raise HTTPException(status_code=400, detail="Invalid status")
-
     assignment.status = body.status
     if body.status == "completed":
-        from datetime import datetime, timezone
         assignment.completed_at = datetime.now(timezone.utc)
+        await db.flush()
+
+        # Auto-lock collaborative tasks when ALL annotators for that type complete
+        if assignment.task_type in ("speaker", "gender", "transcription"):
+            same_type = (await db.execute(
+                select(Assignment)
+                .where(Assignment.audio_file_id == assignment.audio_file_id)
+                .where(Assignment.task_type == assignment.task_type)
+            )).scalars().all()
+
+            if all(a.status == "completed" for a in same_type):
+                af = (await db.execute(
+                    select(AudioFile).where(AudioFile.id == assignment.audio_file_id)
+                )).scalar_one_or_none()
+                if af:
+                    setattr(af, f"collaborative_locked_{assignment.task_type}", True)
+                    await db.flush()
+
+        # Auto-finalize emotion Tier 1 + 2 when ALL emotion annotators complete.
+        # Admin only needs to manually resolve Tier 3 (low-confidence conflicts).
+        if assignment.task_type == "emotion":
+            all_emotion = (await db.execute(
+                select(Assignment)
+                .where(Assignment.audio_file_id == assignment.audio_file_id)
+                .where(Assignment.task_type == "emotion")
+            )).scalars().all()
+
+            if all_emotion and all(a.status == "completed" for a in all_emotion):
+                await auto_finalize_emotions(
+                    db=db,
+                    file_id=assignment.audio_file_id,
+                    finalized_by=assignment.annotator_id,
+                )
 
     await db.flush()
     await db.refresh(assignment)

@@ -23,11 +23,15 @@ export interface WaveformPlayerRef {
   play: () => void
   pause: () => void
   getCurrentTime: () => number
+  addRegion: (id: string, start: number, end: number, color?: string) => void
+  clearRegions: () => void
 }
 
 interface Props {
   audioUrl: string
   onTimeUpdate?: (t: number) => void
+  onRegionUpdate?: (id: string, start: number, end: number) => void
+  onReady?: () => void
   height?: number
 }
 
@@ -38,9 +42,10 @@ function fmtTime(t: number): string {
 }
 
 const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
-  ({ audioUrl, onTimeUpdate, height = 80 }, ref) => {
+  ({ audioUrl, onTimeUpdate, onRegionUpdate, onReady, height = 80 }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null)
     const wsRef = useRef<any>(null)
+    const regionsRef = useRef<any>(null)
     const [playing, setPlaying] = useState(false)
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
@@ -58,9 +63,12 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
 
       const init = async () => {
         const WaveSurfer = (await import("wavesurfer.js")).default
+        const RegionsPlugin = (await import("wavesurfer.js/dist/plugins/regions.esm.js")).default
 
         // If cleanup already ran (StrictMode double-invoke), bail out early.
         if (cancelled || !containerRef.current) return
+
+        const regions = RegionsPlugin.create()
 
         ws = WaveSurfer.create({
           container: containerRef.current,
@@ -71,9 +79,11 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           height,
           normalize: true,
           interact: true,
+          plugins: [regions],
         })
 
         wsRef.current = ws
+        regionsRef.current = regions
 
         // Fetch audio through axios so the JWT Authorization header is included.
         // WaveSurfer's own internal fetch() would not carry the auth header.
@@ -92,6 +102,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
         ws.on("ready", () => {
           setDuration(ws.getDuration())
           setReady(true)
+          onReady?.()
         })
 
         ws.on("audioprocess", (t: number) => {
@@ -112,6 +123,11 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           setPlaying(false)
           setCurrentTime(0)
         })
+
+        // Region drag/resize events
+        regions.on("region-updated", (region: any) => {
+          onRegionUpdate?.(region.id, region.start, region.end)
+        })
       }
 
       init()
@@ -120,6 +136,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
         cancelled = true
         ws?.destroy()
         wsRef.current = null
+        regionsRef.current = null
         if (blobUrl) URL.revokeObjectURL(blobUrl)
       }
     }, [audioUrl]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -135,6 +152,12 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       play: () => wsRef.current?.play(),
       pause: () => wsRef.current?.pause(),
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
+      addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
+        regionsRef.current?.addRegion({ id, start, end, color, drag: true, resize: true })
+      },
+      clearRegions: () => {
+        regionsRef.current?.clearRegions()
+      },
     }))
 
     const togglePlay = useCallback(() => wsRef.current?.playPause(), [])

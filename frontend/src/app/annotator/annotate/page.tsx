@@ -6,9 +6,11 @@ import {
   useEffect,
   useRef,
   useState,
+  useMemo,
 } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import {
+  Alert,
   Badge,
   Box,
   Button,
@@ -17,6 +19,7 @@ import {
   HStack,
   Heading,
   IconButton,
+  Input,
   Select,
   Spinner,
   Text,
@@ -24,7 +27,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
-import { ArrowLeft, CheckCheck, Save } from "lucide-react"
+import { ArrowLeft, CheckCheck, Plus, Save, Trash2 } from "lucide-react"
 import dynamic from "next/dynamic"
 import api from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -47,6 +50,7 @@ interface AnnotateData {
     duration: number | null
     num_speakers: number | null
     language: string | null
+    emotion_gated: boolean
   }
   speaker_segments: Segment[]
   emotion_segments: Segment[]
@@ -243,15 +247,19 @@ function SegmentEditor({
   selection,
   onClose,
   onSaved,
+  onDelete,
+  onTimesChanged,
   playerRef,
 }: {
   selection: Selection
   onClose: () => void
   onSaved: (type: SelectionType, updated: Segment | TranscriptSegment) => void
+  onDelete?: () => Promise<void>
+  onTimesChanged?: () => void
   playerRef: React.RefObject<WaveformPlayerRef | null>
 }) {
   const [saving, setSaving] = useState(false)
-  // Local editable state
+  const [deleting, setDeleting] = useState(false)
   const [emotion, setEmotion] = useState<string>(
     (selection.segment as Segment).emotion ?? ""
   )
@@ -264,6 +272,8 @@ function SegmentEditor({
   const [speakerLabel, setSpeakerLabel] = useState<string>(
     (selection.segment as Segment).speaker_label ?? ""
   )
+  const [startTime, setStartTime] = useState<number>(selection.segment.start_time)
+  const [endTime, setEndTime] = useState<number>(selection.segment.end_time)
   const [editedText, setEditedText] = useState<string>(
     (selection.segment as TranscriptSegment).edited_text ??
       (selection.segment as TranscriptSegment).original_text ??
@@ -291,14 +301,20 @@ function SegmentEditor({
         onSaved(type, res.data)
         ToastWizard.standard("success", "Emotion saved")
       } else if (type === "speaker") {
-        res = await api.patch(`/api/segments/speaker/${segment.id}`, {
+        const payload: Record<string, unknown> = {
           speaker_label: speakerLabel || null,
           gender: gender || null,
           is_ambiguous: isAmbiguous,
           notes: notes || null,
           updated_at: segment.updated_at,
-        })
+        }
+        if (startTime !== segment.start_time) payload.start_time = startTime
+        if (endTime !== segment.end_time) payload.end_time = endTime
+        const timesChanged = payload.start_time !== undefined || payload.end_time !== undefined
+
+        res = await api.patch(`/api/segments/speaker/${segment.id}`, payload)
         onSaved(type, res.data)
+        if (timesChanged) onTimesChanged?.()
         ToastWizard.standard("success", "Speaker/Gender saved")
       } else {
         res = await api.patch(`/api/segments/transcription/${segment.id}`, {
@@ -309,8 +325,9 @@ function SegmentEditor({
         onSaved(type, res.data)
         ToastWizard.standard("success", "Transcription saved")
       }
-    } catch (err: any) {
-      if (err?.response?.status === 409) {
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status === 409) {
         ToastWizard.standard(
           "warning",
           "Segment was modified by another annotator. Reload to get latest."
@@ -320,6 +337,16 @@ function SegmentEditor({
       }
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!onDelete) return
+    setDeleting(true)
+    try {
+      await onDelete()
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -357,12 +384,7 @@ function SegmentEditor({
 
       <Text fontSize="xs" color="fg.muted" mb={3} fontFamily="mono">
         {fmtTime(segment.start_time)} – {fmtTime(segment.end_time)}
-        <Button
-          size="xs"
-          variant="ghost"
-          ml={2}
-          onClick={jumpToSegment}
-        >
+        <Button size="xs" variant="ghost" ml={2} onClick={jumpToSegment}>
           ▶ Play
         </Button>
       </Text>
@@ -421,16 +443,40 @@ function SegmentEditor({
         {/* Speaker / Gender fields */}
         {type === "speaker" && (
           <>
+            {/* Time inputs */}
+            <HStack gap={2}>
+              <Field.Root>
+                <Field.Label fontSize="xs">Start (s)</Field.Label>
+                <Input
+                  size="sm"
+                  type="number"
+                  step={0.001}
+                  min={0}
+                  value={startTime}
+                  onChange={e => setStartTime(parseFloat(e.target.value) || 0)}
+                />
+              </Field.Root>
+              <Field.Root>
+                <Field.Label fontSize="xs">End (s)</Field.Label>
+                <Input
+                  size="sm"
+                  type="number"
+                  step={0.001}
+                  min={0}
+                  value={endTime}
+                  onChange={e => setEndTime(parseFloat(e.target.value) || 0)}
+                />
+              </Field.Root>
+            </HStack>
+
             <Field.Root>
               <Field.Label fontSize="xs">Speaker Label</Field.Label>
               <Select.Root
                 collection={createListCollection({
-                  items: Array.from(
-                    { length: (segment as Segment).speaker_label
-                      ? 10
-                      : 5 },
-                    (_, i) => ({ label: `speaker_${i + 1}`, value: `speaker_${i + 1}` })
-                  ),
+                  items: Array.from({ length: 10 }, (_, i) => ({
+                    label: `speaker_${i + 1}`,
+                    value: `speaker_${i + 1}`,
+                  })),
                 })}
                 size="sm"
                 value={speakerLabel ? [speakerLabel] : []}
@@ -528,15 +574,23 @@ function SegmentEditor({
           />
         </Field.Root>
 
-        <Button
-          size="sm"
-          colorPalette="blue"
-          loading={saving}
-          onClick={save}
-        >
+        <Button size="sm" colorPalette="blue" loading={saving} onClick={save}>
           <Save size={14} />
           Save
         </Button>
+
+        {onDelete && (
+          <Button
+            size="sm"
+            colorPalette="red"
+            variant="outline"
+            loading={deleting}
+            onClick={handleDelete}
+          >
+            <Trash2 size={14} />
+            Delete Segment
+          </Button>
+        )}
       </VStack>
     </Box>
   )
@@ -550,11 +604,14 @@ function AnnotateInner() {
   const fileId = searchParams.get("file")
 
   const playerRef = useRef<WaveformPlayerRef>(null)
+  const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [waveformReady, setWaveformReady] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
+  const [addingSegment, setAddingSegment] = useState(false)
 
   const load = useCallback(async () => {
     if (!fileId) return
@@ -575,6 +632,52 @@ function AnnotateInner() {
   }, [fileId])
 
   useEffect(() => { load() }, [load])
+
+  // Helper: check if the annotator has a specific task type assigned for this file
+  const hasTask = (t: string) =>
+    data?.assignments.some(a => a.task_type === t) ?? false
+
+  const isSpeakerAnnotator = useMemo(
+    () => data?.assignments.some(a => a.task_type === "speaker") ?? false,
+    [data]
+  )
+
+  // Populate WaveSurfer regions whenever speaker segments or waveform readiness change
+  useEffect(() => {
+    if (!waveformReady || !data || !playerRef.current || !isSpeakerAnnotator) return
+    playerRef.current.clearRegions()
+    for (const seg of data.speaker_segments) {
+      playerRef.current.addRegion(
+        String(seg.id),
+        seg.start_time,
+        seg.end_time,
+        speakerColor(seg.speaker_label) + "40",
+      )
+    }
+  }, [waveformReady, data, isSpeakerAnnotator])
+
+  // Debounced handler for region drag/resize — PATCHes segment times then reloads
+  const handleRegionUpdate = useCallback(
+    (id: string, start: number, end: number) => {
+      clearTimeout(regionTimers.current[id])
+      regionTimers.current[id] = setTimeout(async () => {
+        const segId = parseInt(id, 10)
+        const seg = data?.speaker_segments.find(s => s.id === segId)
+        if (!seg) return
+        try {
+          await api.patch(`/api/segments/speaker/${segId}`, {
+            start_time: parseFloat(start.toFixed(3)),
+            end_time: parseFloat(end.toFixed(3)),
+            updated_at: seg.updated_at,
+          })
+          await load()
+        } catch {
+          ToastWizard.standard("warning", "Failed to save region drag — reload and retry")
+        }
+      }, 600)
+    },
+    [data, load],
+  )
 
   const handleSaved = (type: SelectionType, updated: Segment | TranscriptSegment) => {
     setData(prev => {
@@ -602,12 +705,45 @@ function AnnotateInner() {
         }
       }
     })
-    // Update selection with new updated_at to avoid stale locking issues
+    // Update selection's updated_at to prevent stale optimistic-lock errors
     setSelection(prev =>
       prev?.segment.id === updated.id
         ? { ...prev, segment: { ...prev.segment, updated_at: updated.updated_at } }
         : prev
     )
+  }
+
+  const addSegment = async () => {
+    if (!data) return
+    setAddingSegment(true)
+    try {
+      const currentT = playerRef.current?.getCurrentTime() ?? 0
+      await api.post("/api/segments/speaker/", {
+        audio_file_id: data.audio_file.id,
+        start_time: currentT,
+        end_time: currentT + 2.0,
+        speaker_label: "speaker_1",
+        gender: "unk",
+      })
+      // Reload to get the new segment + matching transcription segment
+      await load()
+      ToastWizard.standard("success", "Segment added at playhead")
+    } catch {
+      ToastWizard.standard("error", "Failed to add segment")
+    } finally {
+      setAddingSegment(false)
+    }
+  }
+
+  const deleteSegment = async (segmentId: number) => {
+    try {
+      await api.delete(`/api/segments/speaker/${segmentId}`)
+      setSelection(null)
+      await load()
+      ToastWizard.standard("success", "Segment deleted")
+    } catch {
+      ToastWizard.standard("error", "Failed to delete segment")
+    }
   }
 
   const markComplete = async (assignment: Assignment) => {
@@ -652,9 +788,26 @@ function AnnotateInner() {
 
   const duration = data.audio_file.duration ?? 0
   const audioUrl = `/api/audio-files/${fileId}/stream`
+  const emotionGated = data.audio_file.emotion_gated
 
   return (
     <Box h="100%" display="flex" flexDir="column">
+      {/* Emotion gate banner — only shown to annotators with an emotion task */}
+      {emotionGated && hasTask("emotion") && (
+        <Box px={4} pt={3} flexShrink={0}>
+          <Alert.Root status="warning" variant="subtle" rounded="md">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title fontSize="sm">Emotion annotation not yet available</Alert.Title>
+              <Alert.Description fontSize="xs">
+                Waiting for speaker segments to be finalized by the admin.
+                Other tasks are still accessible.
+              </Alert.Description>
+            </Alert.Content>
+          </Alert.Root>
+        </Box>
+      )}
+
       {/* Header */}
       <HStack
         px={4}
@@ -692,6 +845,19 @@ function AnnotateInner() {
           </HStack>
         </Box>
         <HStack ml="auto" gap={2} flexWrap="wrap">
+          {/* Add Segment — only when annotator has the speaker task */}
+          {hasTask("speaker") && (
+            <Button
+              size="sm"
+              variant="outline"
+              colorPalette="teal"
+              loading={addingSegment}
+              onClick={addSegment}
+            >
+              <Plus size={14} />
+              Add Segment
+            </Button>
+          )}
           {data.assignments.map(a => (
             <HStack key={a.id} gap={1}>
               <Badge
@@ -730,10 +896,12 @@ function AnnotateInner() {
             ref={playerRef}
             audioUrl={audioUrl}
             onTimeUpdate={setCurrentTime}
+            onReady={() => setWaveformReady(true)}
+            onRegionUpdate={isSpeakerAnnotator ? handleRegionUpdate : undefined}
             height={80}
           />
 
-          {/* Segment tracks */}
+          {/* Segment tracks — each track only renders if annotator has that task */}
           {duration > 0 && (
             <VStack align="stretch" gap={3}>
               {/* Time ruler */}
@@ -752,61 +920,69 @@ function AnnotateInner() {
                 ))}
               </Box>
 
-              <SegmentTrack
-                label="Speaker"
-                segments={data.speaker_segments}
-                duration={duration}
-                currentTime={currentTime}
-                selectedId={
-                  selection?.type === "speaker" ? selection.segment.id : undefined
-                }
-                getColor={(s: Segment) => speakerColor(s.speaker_label)}
-                getLabel={(s: Segment) => s.speaker_label ?? "?"}
-                onSelect={s => setSelection({ type: "speaker", segment: s })}
-              />
+              {hasTask("speaker") && (
+                <SegmentTrack
+                  label="Speaker"
+                  segments={data.speaker_segments}
+                  duration={duration}
+                  currentTime={currentTime}
+                  selectedId={
+                    selection?.type === "speaker" ? selection.segment.id : undefined
+                  }
+                  getColor={(s: Segment) => speakerColor(s.speaker_label)}
+                  getLabel={(s: Segment) => s.speaker_label ?? "?"}
+                  onSelect={s => setSelection({ type: "speaker", segment: s })}
+                />
+              )}
 
-              <SegmentTrack
-                label="Gender"
-                segments={data.speaker_segments}
-                duration={duration}
-                currentTime={currentTime}
-                selectedId={undefined}
-                getColor={(s: Segment) => genderColor(s.gender)}
-                getLabel={(s: Segment) => s.gender ?? "unk"}
-                onSelect={s => setSelection({ type: "speaker", segment: s })}
-              />
+              {(hasTask("gender") || hasTask("speaker")) && (
+                <SegmentTrack
+                  label="Gender"
+                  segments={data.speaker_segments}
+                  duration={duration}
+                  currentTime={currentTime}
+                  selectedId={undefined}
+                  getColor={(s: Segment) => genderColor(s.gender)}
+                  getLabel={(s: Segment) => s.gender ?? "unk"}
+                  onSelect={s => setSelection({ type: "speaker", segment: s })}
+                />
+              )}
 
-              <SegmentTrack
-                label="Emotion (my annotations)"
-                segments={data.emotion_segments}
-                duration={duration}
-                currentTime={currentTime}
-                selectedId={
-                  selection?.type === "emotion" ? selection.segment.id : undefined
-                }
-                getColor={(s: Segment) => emotionColor(s.emotion)}
-                getLabel={(s: Segment) => s.emotion ?? "—"}
-                onSelect={s => setSelection({ type: "emotion", segment: s })}
-              />
+              {hasTask("emotion") && !emotionGated && (
+                <SegmentTrack
+                  label="Emotion (my annotations)"
+                  segments={data.emotion_segments}
+                  duration={duration}
+                  currentTime={currentTime}
+                  selectedId={
+                    selection?.type === "emotion" ? selection.segment.id : undefined
+                  }
+                  getColor={(s: Segment) => emotionColor(s.emotion)}
+                  getLabel={(s: Segment) => s.emotion ?? "—"}
+                  onSelect={s => setSelection({ type: "emotion", segment: s })}
+                />
+              )}
 
-              <SegmentTrack
-                label="Transcription"
-                segments={data.transcription_segments}
-                duration={duration}
-                currentTime={currentTime}
-                selectedId={
-                  selection?.type === "transcription" ? selection.segment.id : undefined
-                }
-                getColor={(_: TranscriptSegment) => "#374151"}
-                getLabel={(s: TranscriptSegment) =>
-                  s.edited_text ?? s.original_text ?? "—"
-                }
-                onSelect={s => setSelection({ type: "transcription", segment: s })}
-              />
+              {hasTask("transcription") && (
+                <SegmentTrack
+                  label="Transcription"
+                  segments={data.transcription_segments}
+                  duration={duration}
+                  currentTime={currentTime}
+                  selectedId={
+                    selection?.type === "transcription" ? selection.segment.id : undefined
+                  }
+                  getColor={(_: TranscriptSegment) => "#374151"}
+                  getLabel={(s: TranscriptSegment) =>
+                    s.edited_text ?? s.original_text ?? "—"
+                  }
+                  onSelect={s => setSelection({ type: "transcription", segment: s })}
+                />
+              )}
             </VStack>
           )}
 
-          {/* Legend */}
+          {/* Emotion colour legend */}
           <HStack gap={4} flexWrap="wrap" pt={2}>
             {Object.entries(EMOTION_COLORS).map(([e, c]) => (
               <HStack key={e} gap={1}>
@@ -817,12 +993,19 @@ function AnnotateInner() {
           </HStack>
         </Box>
 
-        {/* Segment editor sidebar */}
+        {/* Segment editor sidebar — key forces remount on segment change */}
         {selection && (
           <SegmentEditor
+            key={selection.segment.id}
             selection={selection}
             onClose={() => setSelection(null)}
             onSaved={handleSaved}
+            onDelete={
+              selection.type === "speaker" && hasTask("speaker")
+                ? () => deleteSegment(selection.segment.id)
+                : undefined
+            }
+            onTimesChanged={load}
             playerRef={playerRef}
           />
         )}

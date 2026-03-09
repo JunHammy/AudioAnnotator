@@ -8,6 +8,7 @@ from app.auth.dependencies import get_current_user
 from app.database import get_db
 from app.models.models import AudioFile, SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User, Assignment
 from app.schemas.schemas import (
+    SpeakerSegmentCreate,
     SpeakerSegmentResponse,
     SpeakerSegmentUpdate,
     TranscriptionSegmentResponse,
@@ -56,8 +57,8 @@ async def update_speaker_segment(
     if client_ts < server_ts:
         raise STALE_ERROR
 
-    fields = ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]
-    for field in fields:
+    # Standard fields
+    for field in ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]:
         new_val = getattr(body, field, None)
         if new_val is not None:
             old_val = getattr(segment, field)
@@ -72,9 +73,130 @@ async def update_speaker_segment(
                 ))
                 setattr(segment, field, new_val)
 
+    # Time editing — only allowed on shared baseline segments, not per-annotator copies
+    if (body.start_time is not None or body.end_time is not None):
+        if segment.source != "pre_annotated":
+            raise HTTPException(status_code=400, detail="Cannot change timestamps on annotator emotion copies.")
+
+        old_start = segment.start_time
+        old_end = segment.end_time
+
+        if body.start_time is not None and body.start_time != old_start:
+            db.add(SegmentEditHistory(
+                segment_type="speaker", segment_id=segment_id,
+                field_changed="start_time",
+                old_value=str(old_start), new_value=str(body.start_time),
+                edited_by=current_user.id,
+            ))
+            segment.start_time = round(body.start_time, 3)
+
+        if body.end_time is not None and body.end_time != old_end:
+            db.add(SegmentEditHistory(
+                segment_type="speaker", segment_id=segment_id,
+                field_changed="end_time",
+                old_value=str(old_end), new_value=str(body.end_time),
+                edited_by=current_user.id,
+            ))
+            segment.end_time = round(body.end_time, 3)
+
+        # Sync matching TranscriptionSegments to stay aligned with speaker boundaries
+        trans_result = await db.execute(
+            select(TranscriptionSegment)
+            .where(TranscriptionSegment.audio_file_id == segment.audio_file_id)
+            .where(TranscriptionSegment.start_time == old_start)
+            .where(TranscriptionSegment.end_time == old_end)
+        )
+        for t in trans_result.scalars().all():
+            t.start_time = segment.start_time
+            t.end_time = segment.end_time
+
     await db.flush()
     await db.refresh(segment)
     return segment
+
+
+@router.post("/speaker/", response_model=SpeakerSegmentResponse, status_code=status.HTTP_201_CREATED)
+async def create_speaker_segment(
+    body: SpeakerSegmentCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Add a new speaker segment (and matching transcription segment). Requires speaker assignment."""
+    # Verify the file exists
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Require active speaker assignment for this file
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == body.audio_file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "speaker")
+    )).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
+
+    new_seg = SpeakerSegment(
+        audio_file_id=body.audio_file_id,
+        annotator_id=current_user.id,
+        speaker_label=body.speaker_label,
+        start_time=round(body.start_time, 3),
+        end_time=round(body.end_time, 3),
+        gender=body.gender or "unk",
+        source="pre_annotated",
+    )
+    db.add(new_seg)
+
+    # Create a matching blank transcription segment
+    db.add(TranscriptionSegment(
+        audio_file_id=body.audio_file_id,
+        annotator_id=current_user.id,
+        start_time=round(body.start_time, 3),
+        end_time=round(body.end_time, 3),
+        original_text="",
+    ))
+
+    await db.flush()
+    await db.refresh(new_seg)
+    return new_seg
+
+
+@router.delete("/speaker/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_speaker_segment(
+    segment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a speaker segment and its matching transcription segment. Requires speaker assignment."""
+    segment = (await db.execute(
+        select(SpeakerSegment).where(SpeakerSegment.id == segment_id)
+    )).scalar_one_or_none()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    # Require active speaker assignment for this file
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == segment.audio_file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "speaker")
+    )).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
+
+    # Delete matching transcription segments with the same boundaries
+    trans_result = await db.execute(
+        select(TranscriptionSegment)
+        .where(TranscriptionSegment.audio_file_id == segment.audio_file_id)
+        .where(TranscriptionSegment.start_time == segment.start_time)
+        .where(TranscriptionSegment.end_time == segment.end_time)
+    )
+    for t in trans_result.scalars().all():
+        await db.delete(t)
+
+    await db.delete(segment)
+    await db.flush()
 
 
 # ─── Transcription Segments ──────────────────────────────────────────────────
@@ -140,12 +262,17 @@ async def get_annotate_data(
 ):
     """
     Returns all segments for the annotation view.
-    Emotion segments are per-annotator copies (auto-created from baseline on first visit).
-    Speaker and transcription segments are the shared collaborative baseline.
+    - Speaker/transcription segments are the shared collaborative baseline.
+    - Emotion segments are per-annotator copies (auto-created from baseline on first visit).
+      Emotion copies are only created when speaker is locked (collaborative_locked_speaker=True).
+      If speaker is not yet locked, returns emotion_gated=True in audio_file info.
+    - Emotions always start empty (None) — never copied from baseline to prevent bias.
     """
     af = (await db.execute(select(AudioFile).where(AudioFile.id == file_id))).scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
+
+    emotion_gated = not af.collaborative_locked_speaker
 
     # Shared speaker baseline
     speaker_segs = (await db.execute(
@@ -155,29 +282,9 @@ async def get_annotate_data(
         .order_by(SpeakerSegment.start_time)
     )).scalars().all()
 
-    # Annotator's emotion copies
-    emotion_segs = (await db.execute(
-        select(SpeakerSegment)
-        .where(SpeakerSegment.audio_file_id == file_id)
-        .where(SpeakerSegment.annotator_id == current_user.id)
-        .where(SpeakerSegment.source == "annotator")
-        .order_by(SpeakerSegment.start_time)
-    )).scalars().all()
-
-    # Auto-create emotion copies from baseline if not yet created
-    if not emotion_segs and speaker_segs:
-        for seg in speaker_segs:
-            db.add(SpeakerSegment(
-                audio_file_id=file_id,
-                annotator_id=current_user.id,
-                speaker_label=seg.speaker_label,
-                start_time=seg.start_time,
-                end_time=seg.end_time,
-                gender=seg.gender,
-                emotion=seg.emotion,
-                source="annotator",
-            ))
-        await db.flush()
+    # Emotion copies — only created/returned when speaker is locked
+    emotion_segs = []
+    if not emotion_gated:
         emotion_segs = (await db.execute(
             select(SpeakerSegment)
             .where(SpeakerSegment.audio_file_id == file_id)
@@ -185,6 +292,29 @@ async def get_annotate_data(
             .where(SpeakerSegment.source == "annotator")
             .order_by(SpeakerSegment.start_time)
         )).scalars().all()
+
+        # Auto-create on first visit; emotions ALWAYS start empty (prevent bias)
+        if not emotion_segs and speaker_segs:
+            for seg in speaker_segs:
+                db.add(SpeakerSegment(
+                    audio_file_id=file_id,
+                    annotator_id=current_user.id,
+                    speaker_label=seg.speaker_label,
+                    start_time=seg.start_time,
+                    end_time=seg.end_time,
+                    gender=seg.gender,
+                    emotion=None,        # intentionally blank — no bias from JSON labels
+                    emotion_other=None,
+                    source="annotator",
+                ))
+            await db.flush()
+            emotion_segs = (await db.execute(
+                select(SpeakerSegment)
+                .where(SpeakerSegment.audio_file_id == file_id)
+                .where(SpeakerSegment.annotator_id == current_user.id)
+                .where(SpeakerSegment.source == "annotator")
+                .order_by(SpeakerSegment.start_time)
+            )).scalars().all()
 
     trans_segs = (await db.execute(
         select(TranscriptionSegment)
@@ -221,6 +351,7 @@ async def get_annotate_data(
             "id": af.id, "filename": af.filename,
             "duration": af.duration, "num_speakers": af.num_speakers,
             "language": af.language,
+            "emotion_gated": emotion_gated,   # True → speaker not yet locked
         },
         "speaker_segments": [_spk(s) for s in speaker_segs],
         "emotion_segments": [_spk(s) for s in emotion_segs],
