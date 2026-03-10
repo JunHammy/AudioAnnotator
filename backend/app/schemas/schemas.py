@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 # ─── Shared validation constants ────────────────────────────────────────────
 
@@ -107,7 +107,22 @@ class AudioFileResponse(BaseModel):
     locked_by: Optional[int]
     locked_at: Optional[datetime]
     created_at: datetime
+    json_types: list[str] = []
     # file_path intentionally omitted — don't expose server filesystem paths to clients
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_json_types(cls, data):
+        if hasattr(data, "__table__"):
+            # ORM object — convert to dict and extract json_types from relationship
+            columns = {c.key for c in data.__table__.columns}
+            obj_dict = {col: getattr(data, col, None) for col in columns}
+            try:
+                obj_dict["json_types"] = [j.json_type for j in data.original_json_store]
+            except Exception:
+                obj_dict["json_types"] = []
+            return obj_dict
+        return data
 
 
 class AudioFileLockUpdate(BaseModel):

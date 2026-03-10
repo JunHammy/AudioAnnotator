@@ -27,7 +27,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
-import { ArrowLeft, CheckCheck, Plus, Save, Trash2 } from "lucide-react"
+import { ArrowLeft, CheckCheck, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
 import dynamic from "next/dynamic"
 import api from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -149,6 +149,18 @@ function genderColor(g: string | null): string {
   return GENDER_COLORS[g ?? "unk"] ?? "#6b7280"
 }
 
+// Returns a signature of the collaborative segment state for change detection
+function getDataSig(d: AnnotateData): string {
+  const maxTs = (segs: { updated_at: string }[]) =>
+    segs.length === 0 ? "0" : String(Math.max(...segs.map(s => new Date(s.updated_at).getTime())))
+  return [
+    d.speaker_segments.length,
+    maxTs(d.speaker_segments),
+    d.transcription_segments.length,
+    maxTs(d.transcription_segments),
+  ].join("|")
+}
+
 // ─── Segment Track ────────────────────────────────────────────────────────────
 
 function SegmentTrack<T extends { id: number; start_time: number; end_time: number }>({
@@ -174,7 +186,6 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   trackColor?: string
   warningCount?: number
 }) {
-  if (!duration) return null
   return (
     <Box>
       <HStack mb={1} gap={2} align="center">
@@ -187,6 +198,23 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
           </Badge>
         )}
       </HStack>
+      {!duration ? (
+        // Waveform not yet loaded — show placeholder until real duration is known
+        <Box
+          h="32px"
+          bg={trackColor}
+          rounded="sm"
+          borderWidth="1px"
+          borderColor="border"
+          display="flex"
+          alignItems="center"
+          px={3}
+        >
+          <Text fontSize="xs" color="fg.subtle" fontStyle="italic">
+            {segments.length === 0 ? "No segments — add one above" : "Loading…"}
+          </Text>
+        </Box>
+      ) : (
       <Box
         position="relative"
         h="32px"
@@ -246,6 +274,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
           )
         })}
       </Box>
+      )}
     </Box>
   )
 }
@@ -706,13 +735,17 @@ function AnnotateInner() {
 
   const playerRef = useRef<WaveformPlayerRef>(null)
   const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const dataRef = useRef<AnnotateData | null>(null)
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
   const [waveformReady, setWaveformReady] = useState(false)
+  const [waveformDuration, setWaveformDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
   const [addingSegment, setAddingSegment] = useState(false)
+  const [hasUpdates, setHasUpdates] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
 
   const load = useCallback(async () => {
     if (!fileId) return
@@ -734,6 +767,9 @@ function AnnotateInner() {
 
   useEffect(() => { load() }, [load])
 
+  // Keep dataRef current so the polling interval always compares against latest state
+  useEffect(() => { dataRef.current = data }, [data])
+
   // Helper: check if the annotator has a specific task type assigned for this file
   const hasTask = (t: string) =>
     data?.assignments.some(a => a.task_type === t) ?? false
@@ -742,6 +778,30 @@ function AnnotateInner() {
     () => data?.assignments.some(a => a.task_type === "speaker") ?? false,
     [data]
   )
+
+  // Annotators on collaborative tasks (speaker/gender/transcription) can see edits
+  // from other annotators on the same file. Poll every 30s and surface a banner
+  // when remote changes are detected so they can choose when to reload.
+  const hasCollaborativeTasks = useMemo(
+    () => data?.assignments.some(a => ["speaker", "gender", "transcription"].includes(a.task_type)) ?? false,
+    [data]
+  )
+
+  useEffect(() => {
+    if (!fileId || !hasCollaborativeTasks) return
+    const interval = setInterval(async () => {
+      try {
+        const res = await api.get(`/api/segments/annotate/${fileId}`)
+        const current = dataRef.current
+        if (current && getDataSig(res.data) !== getDataSig(current)) {
+          setHasUpdates(true)
+        }
+      } catch {
+        // Silent — don't disturb the user if the background check fails
+      }
+    }, 30_000)
+    return () => clearInterval(interval)
+  }, [fileId, hasCollaborativeTasks])
 
   // Unique speaker labels for this file (derived from current speaker segments)
   const speakerLabels = useMemo(() => {
@@ -955,6 +1015,13 @@ function AnnotateInner() {
     }
   }
 
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    await load()
+    setHasUpdates(false)
+    setRefreshing(false)
+  }
+
   const markComplete = async (assignment: Assignment) => {
     setCompleting(c => ({ ...c, [assignment.id]: true }))
     try {
@@ -995,7 +1062,10 @@ function AnnotateInner() {
 
   if (!data) return null
 
-  const duration = data.audio_file.duration ?? 0
+  // Prefer DB-stored duration; fall back to the actual duration from WaveSurfer
+  // once it loads. This ensures tracks render even for audio-only uploads where
+  // duration was unknown at upload time.
+  const duration = data.audio_file.duration ?? waveformDuration
   const audioUrl = `/api/audio-files/${fileId}/stream`
   const emotionGated = data.audio_file.emotion_gated
 
@@ -1013,6 +1083,24 @@ function AnnotateInner() {
                 Other tasks are still accessible.
               </Alert.Description>
             </Alert.Content>
+          </Alert.Root>
+        </Box>
+      )}
+
+      {/* Collaborative update banner */}
+      {hasUpdates && (
+        <Box px={4} pt={2} flexShrink={0}>
+          <Alert.Root status="info" variant="subtle" rounded="md">
+            <Alert.Indicator />
+            <Alert.Content>
+              <Alert.Title fontSize="sm">Segments updated by another annotator</Alert.Title>
+              <Alert.Description fontSize="xs">
+                Reload to see the latest changes before editing.
+              </Alert.Description>
+            </Alert.Content>
+            <Button size="sm" colorPalette="blue" ml="auto" onClick={handleRefresh} loading={refreshing}>
+              Reload
+            </Button>
           </Alert.Root>
         </Box>
       )}
@@ -1035,6 +1123,19 @@ function AnnotateInner() {
         >
           <ArrowLeft size={16} />
         </IconButton>
+        {hasCollaborativeTasks && (
+          <IconButton
+            aria-label="Refresh segments"
+            size="sm"
+            variant={hasUpdates ? "solid" : "ghost"}
+            colorPalette={hasUpdates ? "orange" : "gray"}
+            onClick={handleRefresh}
+            loading={refreshing}
+            title={hasUpdates ? "Updates available — click to reload" : "Refresh segments"}
+          >
+            <RefreshCw size={14} />
+          </IconButton>
+        )}
         <Box>
           <Heading size="sm" color="fg">
             {data.audio_file.filename}
@@ -1118,16 +1219,16 @@ function AnnotateInner() {
             ref={playerRef}
             audioUrl={audioUrl}
             onTimeUpdate={setCurrentTime}
-            onReady={() => setWaveformReady(true)}
+            onReady={(dur) => { setWaveformReady(true); setWaveformDuration(dur) }}
             onRegionUpdate={isSpeakerAnnotator ? handleRegionUpdate : undefined}
             height={80}
           />
 
           {/* Segment tracks — each track only renders if annotator has that task */}
-          {duration > 0 && (
+          {data.assignments.length > 0 && (
             <VStack align="stretch" gap={3}>
-              {/* Time ruler */}
-              <Box position="relative" h="16px">
+              {/* Time ruler — only shown once real duration is known */}
+              {duration > 0 && <Box position="relative" h="16px">
                 {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => i * 10).map(t => (
                   <Box
                     key={t}
@@ -1140,7 +1241,7 @@ function AnnotateInner() {
                     </Text>
                   </Box>
                 ))}
-              </Box>
+              </Box>}
 
               {hasTask("speaker") && (
                 <SegmentTrack

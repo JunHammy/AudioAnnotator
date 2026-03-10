@@ -31,7 +31,7 @@ interface Props {
   audioUrl: string
   onTimeUpdate?: (t: number) => void
   onRegionUpdate?: (id: string, start: number, end: number) => void
-  onReady?: () => void
+  onReady?: (duration: number) => void
   height?: number
 }
 
@@ -103,9 +103,10 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
         }
 
         ws.on("ready", () => {
-          setDuration(ws.getDuration())
+          const dur = ws.getDuration()
+          setDuration(dur)
           setReady(true)
-          onReady?.()
+          onReady?.(dur)
         })
 
         ws.on("audioprocess", (t: number) => {

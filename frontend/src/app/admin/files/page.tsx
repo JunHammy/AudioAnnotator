@@ -6,6 +6,7 @@ import {
   Badge,
   Box,
   Button,
+  Dialog,
   Flex,
   HStack,
   Heading,
@@ -27,6 +28,7 @@ import {
   Lock,
   RefreshCw,
   Search,
+  Trash2,
   Unlock,
   X,
 } from "lucide-react"
@@ -46,6 +48,7 @@ interface AudioFile {
   collaborative_locked_gender: boolean
   collaborative_locked_transcription: boolean
   created_at: string
+  json_types: string[]
 }
 
 interface Assignment {
@@ -144,6 +147,39 @@ function TaskPill({ taskType, stat }: { taskType: string; stat?: TaskStat }) {
   )
 }
 
+const JSON_TYPE_META: Record<string, { short: string }> = {
+  emotion_gender: { short: "E/G" },
+  speaker:        { short: "Spk" },
+  transcription:  { short: "Trn" },
+}
+const JSON_TYPE_ORDER = ["speaker", "transcription", "emotion_gender"]
+
+function JsonTypeBadges({ jsonTypes }: { jsonTypes: string[] }) {
+  const present = new Set(jsonTypes)
+  return (
+    <HStack gap="3px" flexWrap="wrap">
+      {JSON_TYPE_ORDER.map(t => {
+        const has = present.has(t)
+        return (
+          <Badge
+            key={t}
+            size="xs"
+            colorPalette={has ? "green" : "gray"}
+            variant={has ? "subtle" : "outline"}
+            fontSize="8px"
+            px="3px"
+            py="0px"
+            opacity={has ? 1 : 0.4}
+            title={has ? `${t} JSON linked` : `${t} JSON not uploaded`}
+          >
+            {JSON_TYPE_META[t].short}
+          </Badge>
+        )
+      })}
+    </HStack>
+  )
+}
+
 function LockToggle({
   locked,
   label,
@@ -184,6 +220,8 @@ export default function ManageFilesPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([])
   const [loading, setLoading] = useState(true)
   const [lockLoading, setLockLoading] = useState<Record<string, boolean>>({})
+  const [deleteTarget, setDeleteTarget] = useState<AudioFile | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // Filters
   const [search, setSearch] = useState("")
@@ -283,6 +321,24 @@ export default function ManageFilesPage() {
       ToastWizard.standard("error", "Failed to toggle lock")
     } finally {
       setLockLoading(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
+  // ── Delete file ─────────────────────────────────────────────────────────────
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await api.delete(`/api/audio-files/${deleteTarget.id}`)
+      setFiles(prev => prev.filter(f => f.id !== deleteTarget.id))
+      setAssignments(prev => prev.filter(a => a.audio_file_id !== deleteTarget.id))
+      ToastWizard.standard("success", `Deleted "${deleteTarget.filename}"`)
+      setDeleteTarget(null)
+    } catch {
+      ToastWizard.standard("error", "Failed to delete file")
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -495,12 +551,71 @@ export default function ManageFilesPage() {
                   lockLoading={lockLoading}
                   onToggleLock={toggleLock}
                   onNavigate={router.push}
+                  onDelete={setDeleteTarget}
                 />
               ))}
             </Table.Body>
           </Table.Root>
         </Box>
       )}
+
+      {/* Delete confirm dialog */}
+      <Dialog.Root
+        open={!!deleteTarget}
+        onOpenChange={({ open }) => { if (!open && !deleting) setDeleteTarget(null) }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" maxW="420px">
+              <Dialog.Header>
+                <Dialog.Title color="fg">Delete File</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text color="fg.muted" fontSize="sm">
+                  Permanently delete{" "}
+                  <Text as="span" color="fg" fontFamily="mono" fontWeight="medium">
+                    {deleteTarget?.filename}
+                  </Text>
+                  {" "}and all linked data (segments, assignments, JSONs)?
+                </Text>
+                {deleteTarget && deleteTarget.json_types.length > 0 && (
+                  <HStack mt={3} gap={1}>
+                    <Text fontSize="xs" color="fg.muted">Linked JSONs:</Text>
+                    {deleteTarget.json_types.map(t => (
+                      <Badge key={t} size="xs" colorPalette="green" variant="subtle" fontSize="9px">
+                        {JSON_TYPE_META[t]?.short ?? t}
+                      </Badge>
+                    ))}
+                  </HStack>
+                )}
+                <Text mt={3} fontSize="xs" color="red.400" fontWeight="medium">
+                  This action cannot be undone.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer gap={2}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  colorPalette="red"
+                  onClick={confirmDelete}
+                  loading={deleting}
+                >
+                  <Trash2 size={13} />
+                  Delete
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
     </Box>
   )
 }
@@ -512,11 +627,13 @@ function FileTableRow({
   lockLoading,
   onToggleLock,
   onNavigate,
+  onDelete,
 }: {
   row: FileRow
   lockLoading: Record<string, boolean>
   onToggleLock: (fileId: number, taskType: string, locked: boolean) => void
   onNavigate: (href: string) => void
+  onDelete: (file: AudioFile) => void
 }) {
   const { file, stage, taskSummary } = row
   const stageMeta = STAGE_META[stage]
@@ -542,6 +659,7 @@ function FileTableRow({
                 {file.subfolder}
               </Badge>
             )}
+            <JsonTypeBadges jsonTypes={file.json_types ?? []} />
             <Text fontSize="10px" color="fg.muted" mt={0.5}>
               {new Date(file.created_at).toLocaleDateString()}
             </Text>
@@ -677,6 +795,18 @@ function FileTableRow({
               <Text fontSize="xs" color="purple.400" fontWeight="medium">Finalized</Text>
             </HStack>
           )}
+
+          <IconButton
+            size="2xs"
+            variant="ghost"
+            colorPalette="red"
+            aria-label="Delete file"
+            title="Delete file and all linked data"
+            mt={1}
+            onClick={() => onDelete(file)}
+          >
+            <Trash2 size={11} />
+          </IconButton>
         </VStack>
       </Table.Cell>
     </Table.Row>

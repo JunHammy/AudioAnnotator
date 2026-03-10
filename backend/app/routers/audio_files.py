@@ -8,12 +8,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete as sa_delete
+from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.config import settings
 from app.database import get_db
-from app.models.models import AudioFile, OriginalJSONStore, SpeakerSegment, TranscriptionSegment, User
+from app.models.models import (
+    Assignment, AudioFile, FinalAnnotation, OriginalJSONStore,
+    SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
+)
 from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate
 
 router = APIRouter()
@@ -73,7 +77,11 @@ async def list_audio_files(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(AudioFile).order_by(AudioFile.created_at.desc()))
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .order_by(AudioFile.created_at.desc())
+    )
     return result.scalars().all()
 
 
@@ -83,7 +91,11 @@ async def get_audio_file(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
     af = result.scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
@@ -225,7 +237,13 @@ async def upload_audio_file(
 
     await db.flush()
     await db.refresh(db_file)
-    return db_file
+    # Reload with json_store eager-loaded so AudioFileResponse.json_types is populated
+    result2 = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == db_file.id)
+    )
+    return result2.scalar_one()
 
 
 @router.get("/{file_id}/stream")
@@ -247,6 +265,60 @@ async def stream_audio(
     return FileResponse(path=str(path), media_type=media_type, filename=af.filename)
 
 
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_audio_file(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Permanently delete an audio file and all linked data (segments, assignments, JSONs, disk file)."""
+    result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    file_path = Path(af.file_path)
+
+    # Collect segment IDs so we can purge their edit history
+    spk_ids_res = await db.execute(select(SpeakerSegment.id).where(SpeakerSegment.audio_file_id == file_id))
+    spk_ids = [r[0] for r in spk_ids_res.fetchall()]
+
+    trn_ids_res = await db.execute(select(TranscriptionSegment.id).where(TranscriptionSegment.audio_file_id == file_id))
+    trn_ids = [r[0] for r in trn_ids_res.fetchall()]
+
+    # Delete edit history for segments
+    if spk_ids:
+        await db.execute(
+            sa_delete(SegmentEditHistory).where(
+                SegmentEditHistory.segment_type == "speaker",
+                SegmentEditHistory.segment_id.in_(spk_ids),
+            )
+        )
+    if trn_ids:
+        await db.execute(
+            sa_delete(SegmentEditHistory).where(
+                SegmentEditHistory.segment_type == "transcription",
+                SegmentEditHistory.segment_id.in_(trn_ids),
+            )
+        )
+
+    # Delete all related DB records
+    await db.execute(sa_delete(SpeakerSegment).where(SpeakerSegment.audio_file_id == file_id))
+    await db.execute(sa_delete(TranscriptionSegment).where(TranscriptionSegment.audio_file_id == file_id))
+    await db.execute(sa_delete(Assignment).where(Assignment.audio_file_id == file_id))
+    await db.execute(sa_delete(OriginalJSONStore).where(OriginalJSONStore.audio_file_id == file_id))
+    await db.execute(sa_delete(FinalAnnotation).where(FinalAnnotation.audio_file_id == file_id))
+    await db.execute(sa_delete(AudioFile).where(AudioFile.id == file_id))
+    await db.commit()
+
+    # Remove physical file from disk
+    try:
+        if file_path.is_file():
+            file_path.unlink()
+    except OSError:
+        pass  # Log-worthy but not fatal — DB record is already gone
+
+
 @router.patch("/{file_id}/lock", response_model=AudioFileResponse)
 async def toggle_task_lock(
     file_id: int,
@@ -254,7 +326,11 @@ async def toggle_task_lock(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
     af = result.scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
