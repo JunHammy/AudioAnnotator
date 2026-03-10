@@ -149,9 +149,15 @@ function groupItems(items: QueueItem[], existingMap: Map<string, ExistingFile>):
 }
 
 function groupReady(g: FileGroup): boolean {
-  if (g.audio) return true;  // new audio upload (JSONs optional)
+  const hasUnuploadedJson = [g.emotion_gender, g.speaker, g.transcription]
+    .some(item => item && item.status !== "done");
+
+  // Audio already uploaded — remaining JSONs can be linked
+  if (g.audio?.status === "done" && g.existingFileId && hasUnuploadedJson) return true;
+  // New audio upload (with optional JSONs)
+  if (g.audio && g.audio.status !== "done") return true;
   // JSON-only linking to an existing DB file
-  if (g.existingFileId && (g.emotion_gender || g.speaker || g.transcription)) return true;
+  if (!g.audio && g.existingFileId && hasUnuploadedJson) return true;
   return false;
 }
 
@@ -279,13 +285,16 @@ export default function UploadFilesPage() {
   async function uploadGroup(g: FileGroup) {
     if (!groupReady(g)) return;
 
+    // If audio was already uploaded this session, treat remaining JSONs as a link operation
+    const audioAlreadyDone = g.audio?.status === "done";
+
     // ── JSON-only: link to an existing DB file ──────────────────────────────
-    if (!g.audio && g.existingFileId) {
+    if ((!g.audio || audioAlreadyDone) && g.existingFileId) {
       const jsonSlots = [
         { item: g.emotion_gender, type: "emotion_gender" },
         { item: g.speaker,        type: "speaker" },
         { item: g.transcription,  type: "transcription" },
-      ].filter(({ item }) => !!item) as { item: QueueItem; type: string }[];
+      ].filter(({ item }) => !!item && item.status !== "done") as { item: QueueItem; type: string }[];
 
       for (const { item, type } of jsonSlots) {
         updateItemStatus([item.id], "uploading");
@@ -556,14 +565,15 @@ export default function UploadFilesPage() {
                       </Flex>
                     </Table.Cell>
                     <Table.Cell px={4} py={2}>
-                      {item.status !== "uploading" && item.status !== "done" && (
+                      {item.status !== "uploading" && (
                         <Button
                           size="xs"
                           variant="ghost"
-                          color="fg.muted"
+                          color={item.status === "done" ? "fg.subtle" : "fg.muted"}
                           p={0}
                           minW="auto"
                           onClick={() => removeItem(item.id)}
+                          title="Remove from queue"
                         >
                           <X size={14} />
                         </Button>
