@@ -246,6 +246,96 @@ async def upload_audio_file(
     return result2.scalar_one()
 
 
+@router.post("/{file_id}/json", response_model=AudioFileResponse, status_code=status.HTTP_201_CREATED)
+async def add_json_to_file(
+    file_id: int,
+    json_type: str = Form(...),
+    json_file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Attach or replace a JSON annotation file on an existing audio file.
+    Segments are seeded only if none of that type exist yet (safe for files already in progress).
+    """
+    if json_type not in ("emotion_gender", "speaker", "transcription"):
+        raise HTTPException(status_code=400, detail="json_type must be emotion_gender, speaker, or transcription")
+    if not (json_file.filename or "").lower().endswith(".json"):
+        raise HTTPException(status_code=400, detail="File must be .json")
+
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    try:
+        data = json.loads(await json_file.read())
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+
+    # Upsert OriginalJSONStore
+    existing_store = next((j for j in af.original_json_store if j.json_type == json_type), None)
+    if existing_store:
+        existing_store.data = data
+    else:
+        db.add(OriginalJSONStore(audio_file_id=file_id, json_type=json_type, data=data))
+
+    # Seed segments only if none of this type exist yet (non-destructive)
+    if json_type == "speaker":
+        existing_check = (await db.execute(
+            select(SpeakerSegment.id).where(SpeakerSegment.audio_file_id == file_id).limit(1)
+        )).scalar_one_or_none()
+        if not existing_check:
+            spk_segs_raw = data.get("speakers", [])
+            for s in spk_segs_raw:
+                db.add(SpeakerSegment(
+                    audio_file_id=file_id,
+                    annotator_id=admin.id,
+                    speaker_label=_renumber_speaker(s.get("speaker", "")),
+                    start_time=round(float(s.get("start_time", 0)), 3),
+                    end_time=round(float(s.get("end_time", 0)), 3),
+                    gender="unk",
+                    emotion=None,
+                    source="pre_annotated",
+                ))
+            if spk_segs_raw and not af.duration:
+                af.duration = round(max((s.get("end_time", 0) for s in spk_segs_raw), default=0.0), 2)
+            if not af.num_speakers:
+                ns = data.get("num_speakers") or len({s.get("speaker", "") for s in spk_segs_raw})
+                af.num_speakers = max(int(ns), 1) if ns else None
+
+    elif json_type == "transcription":
+        existing_check = (await db.execute(
+            select(TranscriptionSegment.id).where(TranscriptionSegment.audio_file_id == file_id).limit(1)
+        )).scalar_one_or_none()
+        if not existing_check:
+            texts = data.get("texts", [])
+            for t in texts:
+                db.add(TranscriptionSegment(
+                    audio_file_id=file_id,
+                    annotator_id=admin.id,
+                    start_time=round(float(t.get("start_time", 0)), 3),
+                    end_time=round(float(t.get("end_time", 0)), 3),
+                    original_text=t.get("text", ""),
+                ))
+            if texts and not af.duration:
+                af.duration = round(max((t.get("end_time", 0) for t in texts), default=0.0), 2)
+
+    # emotion_gender: stored in JSON store only; used during review finalisation
+
+    await db.flush()
+    result2 = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    return result2.scalar_one()
+
+
 @router.get("/{file_id}/stream")
 async def stream_audio(
     file_id: int,

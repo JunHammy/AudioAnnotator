@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
@@ -33,6 +33,12 @@ interface QueueItem {
   error?: string;
 }
 
+interface ExistingFile {
+  id: number;
+  filename: string;
+  json_types: string[];
+}
+
 interface FileGroup {
   stem: string;             // e.g. my001005_9454
   audio?:          QueueItem;
@@ -40,6 +46,9 @@ interface FileGroup {
   speaker?:        QueueItem;
   transcription?:  QueueItem;
   status: UploadStatus;
+  // Set when JSON-only group matches a file already in the DB
+  existingFileId?:   number;
+  existingFilename?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -115,14 +124,20 @@ function statusIcon(s: UploadStatus) {
   return null;
 }
 
-function groupItems(items: QueueItem[]): FileGroup[] {
+function groupItems(items: QueueItem[], existingMap: Map<string, ExistingFile>): FileGroup[] {
   const map = new Map<string, FileGroup>();
   for (const item of items) {
     const { stem } = detectFileType(item.file.name);
     // Respect user's manual type override; only fall back to auto-detection
     const type = item.fileType !== "unknown" ? item.fileType : detectFileType(item.file.name).type;
     if (!map.has(stem)) {
-      map.set(stem, { stem, status: "ready" });
+      const existing = existingMap.get(stem);
+      map.set(stem, {
+        stem,
+        status: "ready",
+        existingFileId:   existing?.id,
+        existingFilename: existing?.filename,
+      });
     }
     const g = map.get(stem)!;
     if (type === "audio")          g.audio          = item;
@@ -134,7 +149,10 @@ function groupItems(items: QueueItem[]): FileGroup[] {
 }
 
 function groupReady(g: FileGroup): boolean {
-  return !!g.audio; // Only audio is required; JSONs are optional
+  if (g.audio) return true;  // new audio upload (JSONs optional)
+  // JSON-only linking to an existing DB file
+  if (g.existingFileId && (g.emotion_gender || g.speaker || g.transcription)) return true;
+  return false;
 }
 
 // ── Drop Zone ──────────────────────────────────────────────────────────────
@@ -196,11 +214,26 @@ const JSON_TYPE_OPTIONS = createListCollection({
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function UploadFilesPage() {
-  const [queue,      setQueue]      = useState<QueueItem[]>([]);
-  const [language,   setLanguage]   = useState<string[]>(["English"]);
-  const [subfolder,  setSubfolder]  = useState("");
-  const [uploading,  setUploading]  = useState(false);
-  const [sfErr,      setSfErr]      = useState("");
+  const [queue,          setQueue]          = useState<QueueItem[]>([]);
+  const [language,       setLanguage]       = useState<string[]>(["English"]);
+  const [subfolder,      setSubfolder]      = useState("");
+  const [uploading,      setUploading]      = useState(false);
+  const [sfErr,          setSfErr]          = useState("");
+  const [existingFiles,  setExistingFiles]  = useState<ExistingFile[]>([]);
+
+  // Fetch existing DB files so we can auto-match JSON-only uploads
+  useEffect(() => {
+    api.get("/api/audio-files")
+      .then(r => setExistingFiles(r.data))
+      .catch(() => {}); // non-critical — matching just won't work if this fails
+  }, []);
+
+  // Stem → existing DB file map (strip extension from filename)
+  const existingMap = new Map<string, ExistingFile>();
+  for (const f of existingFiles) {
+    const stem = f.filename.replace(/\.[^.]+$/, "");
+    existingMap.set(stem, f);
+  }
 
   const SAFE_NAME_RE = /^[a-zA-Z0-9_\-.]{0,100}$/;
 
@@ -237,24 +270,58 @@ export default function UploadFilesPage() {
     setQueue((prev) => prev.map((i) => i.id === id ? { ...i, fileType: type } : i));
   }
 
-  const groups = groupItems(queue);
+  const groups = groupItems(queue, existingMap);
+
+  const updateItemStatus = (ids: string[], status: UploadStatus, error?: string) => {
+    setQueue((prev) => prev.map((i) => ids.includes(i.id) ? { ...i, status, error } : i));
+  };
 
   async function uploadGroup(g: FileGroup) {
-    if (!g.audio) return;
+    if (!groupReady(g)) return;
 
-    const updateStatus = (ids: string[], status: UploadStatus, error?: string) => {
-      setQueue((prev) => prev.map((i) =>
-        ids.includes(i.id) ? { ...i, status, error } : i
-      ));
-    };
+    // ── JSON-only: link to an existing DB file ──────────────────────────────
+    if (!g.audio && g.existingFileId) {
+      const jsonSlots = [
+        { item: g.emotion_gender, type: "emotion_gender" },
+        { item: g.speaker,        type: "speaker" },
+        { item: g.transcription,  type: "transcription" },
+      ].filter(({ item }) => !!item) as { item: QueueItem; type: string }[];
+
+      for (const { item, type } of jsonSlots) {
+        updateItemStatus([item.id], "uploading");
+        const fd = new FormData();
+        fd.append("json_file", item.file);
+        fd.append("json_type", type);
+        try {
+          await api.post(`/api/audio-files/${g.existingFileId}/json`, fd, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+          updateItemStatus([item.id], "done");
+          // Refresh the existing file's json_types so the map stays current
+          setExistingFiles(prev => prev.map(f =>
+            f.id === g.existingFileId
+              ? { ...f, json_types: [...new Set([...f.json_types, type])] }
+              : f
+          ));
+        } catch (e: any) {
+          const msg = e?.response?.data?.detail ?? "Link failed.";
+          updateItemStatus([item.id], "error", msg);
+          ToastWizard.standard("error", "Link failed", `${item.file.name}: ${msg}`, 5000, true);
+        }
+      }
+      ToastWizard.standard("success", "Linked", `JSON(s) linked to ${g.existingFilename ?? g.stem}.`, 3000, true);
+      return;
+    }
+
+    // ── Normal: new audio upload ────────────────────────────────────────────
+    if (!g.audio) return;
 
     const ids = [g.audio, g.emotion_gender, g.speaker, g.transcription]
       .filter(Boolean).map((i) => i!.id);
-    updateStatus(ids, "uploading");
+    updateItemStatus(ids, "uploading");
 
     const fd = new FormData();
     fd.append("audio", g.audio.file);
-    // Only append JSON files that were provided — all are optional on the backend
     if (g.emotion_gender) fd.append("emotion_gender_json", g.emotion_gender.file);
     if (g.speaker)        fd.append("speaker_json",        g.speaker.file);
     if (g.transcription)  fd.append("transcription_json",  g.transcription.file);
@@ -262,14 +329,17 @@ export default function UploadFilesPage() {
     fd.append("subfolder", subfolder.trim());
 
     try {
-      await api.post("/api/audio-files", fd, {
+      const res = await api.post("/api/audio-files", fd, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      updateStatus(ids, "done");
+      updateItemStatus(ids, "done");
+      // Add newly uploaded file to existing map so follow-up JSON uploads can link to it
+      const newFile: ExistingFile = res.data;
+      setExistingFiles(prev => [newFile, ...prev]);
       ToastWizard.standard("success", "Uploaded", `${g.stem} uploaded successfully.`, 3000, true);
     } catch (e: any) {
       const msg = e?.response?.data?.detail ?? "Upload failed.";
-      updateStatus(ids, "error", msg);
+      updateItemStatus(ids, "error", msg);
       ToastWizard.standard("error", "Upload failed", `${g.stem}: ${msg}`, 5000, true);
     }
   }
@@ -292,9 +362,16 @@ export default function UploadFilesPage() {
     setQueue((prev) => prev.filter((i) => i.status !== "done"));
   }
 
-  const readyCount   = groups.filter(groupReady).length;
-  const doneCount    = groups.filter((g) => g.audio?.status === "done").length;
-  const errorCount   = groups.filter((g) => g.audio?.status === "error").length;
+  const readyCount  = groups.filter(groupReady).length;
+  const linkCount   = groups.filter(g => !g.audio && g.existingFileId && groupReady(g)).length;
+  const doneCount   = groups.filter(g => {
+    const all = [g.audio, g.emotion_gender, g.speaker, g.transcription].filter(Boolean) as QueueItem[];
+    return all.length > 0 && all.every(i => i.status === "done");
+  }).length;
+  const errorCount  = groups.filter(g => {
+    const all = [g.audio, g.emotion_gender, g.speaker, g.transcription].filter(Boolean) as QueueItem[];
+    return all.some(i => i.status === "error");
+  }).length;
 
   return (
     <Box p={8} maxW="1100px">
@@ -349,8 +426,9 @@ export default function UploadFilesPage() {
 
           {/* Summary */}
           <Box bg="bg.muted" rounded="md" p={3} mb={4} fontSize="xs" color="fg.muted">
-            <Text mb={1}><Text as="span" color="fg">{readyCount}</Text> groups ready to upload</Text>
-            {doneCount > 0 && <Text mb={1}><Text as="span" color="green.400">{doneCount}</Text> uploaded</Text>}
+            <Text mb={1}><Text as="span" color="fg">{readyCount - linkCount}</Text> new uploads</Text>
+            {linkCount > 0 && <Text mb={1}><Text as="span" color="blue.400">{linkCount}</Text> JSON links to existing</Text>}
+            {doneCount > 0 && <Text mb={1}><Text as="span" color="green.400">{doneCount}</Text> done</Text>}
             {errorCount > 0 && <Text><Text as="span" color="red.400">{errorCount}</Text> failed</Text>}
           </Box>
 
@@ -497,17 +575,31 @@ export default function UploadFilesPage() {
             </Table.Body>
           </Table.Root>
 
-          {/* Warn about JSON files without a matching audio file */}
-          {groups.some((g) => !g.audio && g.audio?.status !== "done") && (
+          {/* Auto-match info and unmatched warnings */}
+          {groups.some(g => !g.audio) && (
             <Box px={5} py={3} borderTopWidth="1px" borderColor="border">
-              <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1}>JSON files without matching audio (will not upload):</Text>
-              {groups
-                .filter((g) => !g.audio)
-                .map((g) => (
-                  <Text key={g.stem} fontSize="xs" color="fg.muted">
-                    {g.stem}: no audio file found — add the corresponding .wav/.mp3 to upload
+              {/* Matched — will link to existing */}
+              {groups.filter(g => !g.audio && g.existingFileId).map(g => (
+                <Text key={g.stem} fontSize="xs" color="blue.300" mb={0.5}>
+                  ↗ {g.stem}: will link to existing file <Text as="span" fontFamily="mono">{g.existingFilename}</Text>
+                  {g.existingFileId && existingFiles.find(f => f.id === g.existingFileId)?.json_types?.length ? (
+                    <Text as="span" color="fg.muted"> (already has: {existingFiles.find(f => f.id === g.existingFileId)?.json_types.join(", ")})</Text>
+                  ) : null}
+                </Text>
+              ))}
+              {/* Unmatched — no audio in queue, no DB match */}
+              {groups.filter(g => !g.audio && !g.existingFileId).length > 0 && (
+                <>
+                  <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1} mt={groups.some(g => !g.audio && g.existingFileId) ? 2 : 0}>
+                    No matching audio found (will not upload):
                   </Text>
-                ))}
+                  {groups.filter(g => !g.audio && !g.existingFileId).map(g => (
+                    <Text key={g.stem} fontSize="xs" color="fg.muted">
+                      {g.stem}: add the .wav/.mp3 to the queue, or upload audio first
+                    </Text>
+                  ))}
+                </>
+              )}
             </Box>
           )}
         </Box>
