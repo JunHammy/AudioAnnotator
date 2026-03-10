@@ -11,18 +11,18 @@ async def main():
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as session:
-        existing = (await session.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()
+        existing = (await session.execute(select(User).where(User.username == settings.admin_username))).scalar_one_or_none()
         if existing:
-            print("Admin user already exists — skipping.")
+            print(f"Admin user '{settings.admin_username}' already exists — skipping.")
         else:
             admin = User(
-                username="admin",
-                password_hash=hash_password("admin123"),
+                username=settings.admin_username,
+                password_hash=hash_password(settings.admin_password),
                 role="admin",
             )
             session.add(admin)
             await session.commit()
-            print("Created admin user: admin / admin123")
+            print(f"Created admin user: {settings.admin_username}")
 
     await engine.dispose()
 

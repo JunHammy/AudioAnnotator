@@ -9,6 +9,9 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
+    admin_username: str = "admin"
+    admin_password: str
+
     upload_dir: str = "/app/uploads"
     environment: str = "development"
     allowed_origins: str = "http://localhost:3000"
