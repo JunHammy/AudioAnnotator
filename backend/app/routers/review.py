@@ -148,6 +148,7 @@ async def get_emotion_review(
             "annotations": annotations,
             "finalized": final is not None,
             "final_emotion": final.data.get("emotion") if final else None,
+            "final_emotion_other": final.data.get("emotion_other") if final else None,
             "final_method": final.decision_method if final else None,
         })
     return out
@@ -156,6 +157,7 @@ async def get_emotion_review(
 class EmotionDecision(BaseModel):
     segment_id: int
     emotion: str
+    emotion_other: str | None = None
     decision_method: str  # unanimous | weighted | manual
 
 
@@ -186,8 +188,12 @@ async def decide_emotion(
     )).scalar_one_or_none()
 
     now = datetime.now(timezone.utc)
+    emotion_data = {"emotion": body.emotion}
+    if body.emotion == "Other" and body.emotion_other:
+        emotion_data["emotion_other"] = body.emotion_other
+
     if fa:
-        fa.data = {"emotion": body.emotion}
+        fa.data = emotion_data
         fa.decision_method = body.decision_method
         fa.finalized_by = admin.id
         fa.finalized_at = now
@@ -197,7 +203,7 @@ async def decide_emotion(
             audio_file_id=file_id,
             segment_id=body.segment_id,
             annotation_type="emotion",
-            data={"emotion": body.emotion},
+            data=emotion_data,
             decision_method=body.decision_method,
             finalized_by=admin.id,
             finalized_at=now,
@@ -224,8 +230,12 @@ async def decide_emotion_batch(
             .where(FinalAnnotation.annotation_type == "emotion")
         )).scalar_one_or_none()
 
+        emotion_data = {"emotion": d.emotion}
+        if d.emotion == "Other" and d.emotion_other:
+            emotion_data["emotion_other"] = d.emotion_other
+
         if fa:
-            fa.data = {"emotion": d.emotion}
+            fa.data = emotion_data
             fa.decision_method = d.decision_method
             fa.finalized_by = admin.id
             fa.finalized_at = now
@@ -235,7 +245,7 @@ async def decide_emotion_batch(
                 audio_file_id=file_id,
                 segment_id=d.segment_id,
                 annotation_type="emotion",
-                data={"emotion": d.emotion},
+                data=emotion_data,
                 decision_method=d.decision_method,
                 finalized_by=admin.id,
                 finalized_at=now,

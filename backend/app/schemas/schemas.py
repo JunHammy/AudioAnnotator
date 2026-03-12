@@ -283,8 +283,10 @@ class TranscriptionSegmentResponse(BaseModel):
 
 
 class TranscriptionSegmentUpdate(BaseModel):
-    edited_text: Optional[str] = None
-    notes:       Optional[str] = None
+    edited_text: Optional[str]   = None
+    notes:       Optional[str]   = None
+    start_time:  Optional[float] = None
+    end_time:    Optional[float] = None
     updated_at:  datetime  # Optimistic locking
 
 

@@ -9,6 +9,7 @@ import {
   Heading,
   Icon,
   IconButton,
+  Input,
   Select,
   Spinner,
   Table,
@@ -65,6 +66,7 @@ interface EmotionSegmentReview {
   annotations: AnnotatorVote[]
   finalized: boolean
   final_emotion: string | null
+  final_emotion_other: string | null
   final_method: string | null
 }
 
@@ -135,7 +137,7 @@ function CollabSegmentRow({ seg, taskType }: { seg: CollabSegment; taskType: str
           </Text>
         </Table.Cell>
         <Table.Cell>
-          <Text fontSize="xs" color="fg.muted">
+          <Text fontSize="xs" color="fg.muted" suppressHydrationWarning>
             {new Date(seg.updated_at).toLocaleString()}
           </Text>
         </Table.Cell>
@@ -159,7 +161,7 @@ function CollabSegmentRow({ seg, taskType }: { seg: CollabSegment; taskType: str
             <VStack align="start" gap={1}>
               {seg.edit_history.map((h, i) => (
                 <HStack key={i} gap={2} fontSize="xs">
-                  <Text color="fg.muted" fontFamily="mono">
+                  <Text color="fg.muted" fontFamily="mono" suppressHydrationWarning>
                     {new Date(h.edited_at).toLocaleString()}
                   </Text>
                   <Text color="blue.300">{h.username}</Text>
@@ -187,6 +189,7 @@ function EmotionTab({ fileId }: { fileId: number }) {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<"all" | "1" | "2" | "3" | "unresolved">("all")
   const [decisions, setDecisions] = useState<Record<number, string>>({})
+  const [decisionOthers, setDecisionOthers] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [batchSaving, setBatchSaving] = useState(false)
 
@@ -196,11 +199,17 @@ function EmotionTab({ fileId }: { fileId: number }) {
       const res = await api.get(`/api/review/${fileId}/emotion`)
       setSegments(res.data)
       const init: Record<number, string> = {}
+      const initOthers: Record<number, string> = {}
       for (const s of res.data) {
-        if (s.final_emotion) init[s.segment_id] = s.final_emotion
-        else if (s.winning_label && s.tier <= 2) init[s.segment_id] = s.winning_label
+        if (s.final_emotion) {
+          init[s.segment_id] = s.final_emotion
+          if (s.final_emotion_other) initOthers[s.segment_id] = s.final_emotion_other
+        } else if (s.winning_label && s.tier <= 2) {
+          init[s.segment_id] = s.winning_label
+        }
       }
       setDecisions(init)
+      setDecisionOthers(initOthers)
     } catch {
       ToastWizard.standard("error", "Failed to load emotion review data")
     } finally {
@@ -213,16 +222,18 @@ function EmotionTab({ fileId }: { fileId: number }) {
   const saveDecision = async (segId: number, method: string) => {
     const emotion = decisions[segId]
     if (!emotion) return
+    const emotionOther = emotion === "Other" ? (decisionOthers[segId] || null) : null
     setSaving(s => ({ ...s, [segId]: true }))
     try {
       await api.post(`/api/review/${fileId}/emotion/decide`, {
         segment_id: segId,
         emotion,
+        emotion_other: emotionOther,
         decision_method: method,
       })
       setSegments(prev =>
         prev.map(s => s.segment_id === segId
-          ? { ...s, finalized: true, final_emotion: emotion, final_method: method }
+          ? { ...s, finalized: true, final_emotion: emotion, final_emotion_other: emotionOther, final_method: method }
           : s
         )
       )
@@ -363,7 +374,9 @@ function EmotionTab({ fileId }: { fileId: number }) {
                             a.emotion === seg.winning_label ? "blue" : "gray"
                           }
                         >
-                          {a.emotion ?? "—"}
+                          {a.emotion === "Other" && a.emotion_other
+                            ? `Other(${a.emotion_other})`
+                            : a.emotion ?? "—"}
                         </Badge>
                         <Text fontSize="xs" color="fg.muted">
                           ({(a.trust_score * 100).toFixed(0)}%)
@@ -383,39 +396,61 @@ function EmotionTab({ fileId }: { fileId: number }) {
                 </Table.Cell>
                 <Table.Cell>{tierBadge(seg.tier)}</Table.Cell>
                 <Table.Cell>
-                  <Select.Root
-                    collection={emotionCollection}
-                    size="xs"
-                    value={decisions[seg.segment_id] ? [decisions[seg.segment_id]] : []}
-                    onValueChange={({ value }) =>
-                      setDecisions(d => ({ ...d, [seg.segment_id]: value[0] }))
-                    }
-                  >
-                    <Select.Trigger>
-                      <Select.ValueText placeholder="Select…" />
-                    </Select.Trigger>
-                    <Select.Positioner>
-                      <Select.Content>
-                        {emotionCollection.items.map(item => (
-                          <Select.Item key={item.value} item={item}>
-                            {item.label}
-                          </Select.Item>
-                        ))}
-                      </Select.Content>
-                    </Select.Positioner>
-                  </Select.Root>
+                  <VStack align="stretch" gap={1}>
+                    <Select.Root
+                      collection={emotionCollection}
+                      size="xs"
+                      value={decisions[seg.segment_id] ? [decisions[seg.segment_id]] : []}
+                      onValueChange={({ value }) =>
+                        setDecisions(d => ({ ...d, [seg.segment_id]: value[0] }))
+                      }
+                    >
+                      <Select.Trigger>
+                        <Select.ValueText placeholder="Select…" />
+                      </Select.Trigger>
+                      <Select.Positioner>
+                        <Select.Content>
+                          {emotionCollection.items.map(item => (
+                            <Select.Item key={item.value} item={item}>
+                              {item.label}
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                    {decisions[seg.segment_id] === "Other" && (
+                      <Input
+                        size="xs"
+                        placeholder="Specify emotion…"
+                        value={decisionOthers[seg.segment_id] ?? ""}
+                        onChange={e =>
+                          setDecisionOthers(d => ({ ...d, [seg.segment_id]: e.target.value }))
+                        }
+                      />
+                    )}
+                  </VStack>
                 </Table.Cell>
                 <Table.Cell>
                   {seg.finalized ? (
-                    <HStack gap={1}>
-                      <CheckCircle size={14} color="green" />
-                      <Text fontSize="xs" color="green.400">{seg.final_method}</Text>
-                    </HStack>
+                    <VStack align="start" gap={0}>
+                      <HStack gap={1}>
+                        <CheckCircle size={14} color="green" />
+                        <Text fontSize="xs" color="green.400">
+                          {seg.final_emotion === "Other" && seg.final_emotion_other
+                            ? `Other(${seg.final_emotion_other})`
+                            : seg.final_emotion}
+                        </Text>
+                      </HStack>
+                      <Text fontSize="9px" color="fg.muted">{seg.final_method}</Text>
+                    </VStack>
                   ) : (
                     <Button
                       size="xs"
                       colorPalette="blue"
-                      disabled={!decisions[seg.segment_id]}
+                      disabled={
+                        !decisions[seg.segment_id] ||
+                        (decisions[seg.segment_id] === "Other" && !decisionOthers[seg.segment_id])
+                      }
                       loading={saving[seg.segment_id]}
                       onClick={() => saveDecision(
                         seg.segment_id,

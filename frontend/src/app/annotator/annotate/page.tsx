@@ -149,6 +149,25 @@ function genderColor(g: string | null): string {
   return GENDER_COLORS[g ?? "unk"] ?? "#6b7280"
 }
 
+// Smart placement: if playhead is inside an existing segment, jump to its end.
+// Clip end_time against the next segment start to avoid overlap.
+function smartPlacement(
+  segs: Array<{ start_time: number; end_time: number }>,
+  currentT: number,
+  duration: number
+): { start: number; end: number } {
+  const container = segs.find(s => s.start_time <= currentT && currentT < s.end_time)
+  const start = container ? container.end_time : currentT
+  const next = segs
+    .filter(s => s.start_time > start)
+    .sort((a, b) => a.start_time - b.start_time)[0]
+  let end = start + 2.0
+  if (next && end > next.start_time) end = next.start_time
+  if (duration > 0) end = Math.min(end, duration)
+  if (end <= start) end = start + 0.1
+  return { start, end }
+}
+
 // Returns a signature of the collaborative segment state for change detection
 function getDataSig(d: AnnotateData): string {
   const maxTs = (segs: { updated_at: string }[]) =>
@@ -289,6 +308,7 @@ function SegmentEditor({
   onTimesChanged,
   playerRef,
   speakerLabels,
+  speakerSegments,
   getGenderForSpeaker,
 }: {
   selection: Selection
@@ -298,6 +318,7 @@ function SegmentEditor({
   onTimesChanged?: () => void
   playerRef: React.RefObject<WaveformPlayerRef | null>
   speakerLabels?: string[]
+  speakerSegments?: Segment[]
   getGenderForSpeaker?: (label: string) => string
 }) {
   const [saving, setSaving] = useState(false)
@@ -362,12 +383,18 @@ function SegmentEditor({
         if (timesChanged) onTimesChanged?.()
         ToastWizard.standard("success", "Speaker/Gender saved")
       } else {
-        res = await api.patch(`/api/segments/transcription/${segment.id}`, {
+        const payload: Record<string, unknown> = {
           edited_text: editedText || null,
           notes: notes || null,
           updated_at: segment.updated_at,
-        })
+        }
+        if (startTime !== segment.start_time) payload.start_time = startTime
+        if (endTime !== segment.end_time) payload.end_time = endTime
+        const timesChanged = payload.start_time !== undefined || payload.end_time !== undefined
+
+        res = await api.patch(`/api/segments/transcription/${segment.id}`, payload)
         onSaved(type, res.data)
+        if (timesChanged) onTimesChanged?.()
         ToastWizard.standard("success", "Transcription saved")
       }
     } catch (err: unknown) {
@@ -646,6 +673,81 @@ function SegmentEditor({
         {/* Transcription fields */}
         {type === "transcription" && (
           <>
+            {/* Time inputs */}
+            <HStack gap={2}>
+              <Field.Root>
+                <Field.Label fontSize="xs">Start (s)</Field.Label>
+                <Input
+                  size="sm"
+                  type="number"
+                  step={0.001}
+                  min={0}
+                  value={startTime}
+                  onChange={e => setStartTime(parseFloat(e.target.value) || 0)}
+                />
+              </Field.Root>
+              <Field.Root>
+                <Field.Label fontSize="xs">End (s)</Field.Label>
+                <Input
+                  size="sm"
+                  type="number"
+                  step={0.001}
+                  min={0}
+                  value={endTime}
+                  onChange={e => setEndTime(parseFloat(e.target.value) || 0)}
+                />
+              </Field.Root>
+            </HStack>
+
+            {/* Align to speaker segment */}
+            {speakerSegments && speakerSegments.length > 0 && (
+              <Field.Root>
+                <Field.Label fontSize="xs">Align to speaker segment</Field.Label>
+                <Select.Root
+                  collection={createListCollection({
+                    items: speakerSegments.map(s => ({
+                      label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`,
+                      value: `${s.start_time}|${s.end_time}`,
+                    })),
+                  })}
+                  size="sm"
+                  value={[]}
+                  onValueChange={({ value }) => {
+                    const v = value[0]
+                    if (!v) return
+                    const [st, et] = v.split("|").map(Number)
+                    setStartTime(st)
+                    setEndTime(et)
+                  }}
+                >
+                  <Select.Trigger>
+                    <Select.ValueText placeholder="Pick speaker segment to align…" />
+                  </Select.Trigger>
+                  <Select.Positioner>
+                    <Select.Content>
+                      {speakerSegments.map(s => {
+                        const val = `${s.start_time}|${s.end_time}`
+                        return (
+                          <Select.Item key={s.id} item={{ label: val, value: val }}>
+                            <Box
+                              display="inline-block"
+                              w="8px"
+                              h="8px"
+                              rounded="full"
+                              bg={speakerColor(s.speaker_label)}
+                              mr={2}
+                              flexShrink={0}
+                            />
+                            {s.speaker_label ?? "?"} ({fmtTime(s.start_time)}–{fmtTime(s.end_time)})
+                          </Select.Item>
+                        )
+                      })}
+                    </Select.Content>
+                  </Select.Positioner>
+                </Select.Root>
+              </Field.Root>
+            )}
+
             <Field.Root>
               <Field.Label fontSize="xs">Original text</Field.Label>
               <Box
@@ -811,6 +913,12 @@ function AnnotateInner() {
     )]
   }, [data])
 
+  // Ordered unique speaker labels for per-lane rendering (null = unknown)
+  const uniqueSpeakerLanes = useMemo(() => {
+    if (!data) return [] as (string | null)[]
+    return [...new Set(data.speaker_segments.map(s => s.speaker_label))]
+  }, [data])
+
   // Look up the known (non-unk) gender for a given speaker label
   const getGenderForSpeaker = useCallback((label: string): string => {
     const seg = data?.speaker_segments.find(
@@ -953,13 +1061,14 @@ function AnnotateInner() {
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
+      const { start, end } = smartPlacement(data.speaker_segments, currentT, waveformDuration)
       // Default to speaker_1; pre-fill its known gender if available
       const defaultLabel = speakerLabels[0] ?? "speaker_1"
       const defaultGender = getGenderForSpeaker(defaultLabel)
       await api.post("/api/segments/speaker", {
         audio_file_id: data.audio_file.id,
-        start_time: currentT,
-        end_time: currentT + 2.0,
+        start_time: start,
+        end_time: end,
         speaker_label: defaultLabel,
         gender: defaultGender,
       })
@@ -989,10 +1098,11 @@ function AnnotateInner() {
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
+      const { start, end } = smartPlacement(data.transcription_segments, currentT, waveformDuration)
       await api.post("/api/segments/transcription", {
         audio_file_id: data.audio_file.id,
-        start_time: currentT,
-        end_time: currentT + 2.0,
+        start_time: start,
+        end_time: end,
         original_text: "",
       })
       await load()
@@ -1244,19 +1354,35 @@ function AnnotateInner() {
               </Box>}
 
               {hasTask("speaker") && (
-                <SegmentTrack
-                  label="Speaker"
-                  segments={data.speaker_segments}
-                  duration={duration}
-                  currentTime={currentTime}
-                  selectedId={
-                    selection?.type === "speaker" ? selection.segment.id : undefined
-                  }
-                  getColor={(s: Segment) => speakerColor(s.speaker_label)}
-                  getLabel={(s: Segment) => s.speaker_label ?? "?"}
-                  onSelect={s => setSelection({ type: "speaker", segment: s })}
-                  warningCount={segmentMismatches.speaker}
-                />
+                <Box>
+                  <HStack mb={1} gap={2} align="center">
+                    <Text fontSize="xs" fontWeight="medium" color="fg.muted" userSelect="none">
+                      Speaker
+                    </Text>
+                    {segmentMismatches.speaker > 0 && (
+                      <Badge size="xs" colorPalette="orange">
+                        {segmentMismatches.speaker} boundary mismatch{segmentMismatches.speaker > 1 ? "es" : ""}
+                      </Badge>
+                    )}
+                  </HStack>
+                  <VStack align="stretch" gap={1}>
+                    {uniqueSpeakerLanes.map(label => (
+                      <SegmentTrack
+                        key={label ?? "__null__"}
+                        label={label ?? "Unknown speaker"}
+                        segments={data.speaker_segments.filter(s => s.speaker_label === label)}
+                        duration={duration}
+                        currentTime={currentTime}
+                        selectedId={
+                          selection?.type === "speaker" ? selection.segment.id : undefined
+                        }
+                        getColor={(s: Segment) => speakerColor(s.speaker_label)}
+                        getLabel={(s: Segment) => s.speaker_label ?? "?"}
+                        onSelect={s => setSelection({ type: "speaker", segment: s })}
+                      />
+                    ))}
+                  </VStack>
+                </Box>
               )}
 
               {(hasTask("gender") || hasTask("speaker")) && (
@@ -1335,6 +1461,7 @@ function AnnotateInner() {
             onTimesChanged={load}
             playerRef={playerRef}
             speakerLabels={speakerLabels}
+            speakerSegments={data.speaker_segments}
             getGenderForSpeaker={getGenderForSpeaker}
           />
         )}

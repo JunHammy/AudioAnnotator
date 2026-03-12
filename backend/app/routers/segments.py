@@ -293,10 +293,13 @@ async def update_transcription_segment(
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
-    server_ts = segment.updated_at.replace(tzinfo=timezone.utc) if segment.updated_at.tzinfo is None else segment.updated_at
-    if client_ts < server_ts:
-        raise STALE_ERROR
+    # Optimistic locking — only enforced for text/notes changes, not time-only edits
+    has_text_changes = body.edited_text is not None or body.notes is not None
+    if has_text_changes:
+        client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
+        server_ts = segment.updated_at.replace(tzinfo=timezone.utc) if segment.updated_at.tzinfo is None else segment.updated_at
+        if client_ts < server_ts:
+            raise STALE_ERROR
 
     for field in ["edited_text", "notes"]:
         new_val = getattr(body, field, None)
@@ -312,6 +315,25 @@ async def update_transcription_segment(
                     edited_by=current_user.id,
                 ))
                 setattr(segment, field, new_val)
+
+    # Time editing
+    if body.start_time is not None and body.start_time != segment.start_time:
+        db.add(SegmentEditHistory(
+            segment_type="transcription", segment_id=segment_id,
+            field_changed="start_time",
+            old_value=str(segment.start_time), new_value=str(body.start_time),
+            edited_by=current_user.id,
+        ))
+        segment.start_time = round(body.start_time, 3)
+
+    if body.end_time is not None and body.end_time != segment.end_time:
+        db.add(SegmentEditHistory(
+            segment_type="transcription", segment_id=segment_id,
+            field_changed="end_time",
+            old_value=str(segment.end_time), new_value=str(body.end_time),
+            edited_by=current_user.id,
+        ))
+        segment.end_time = round(body.end_time, 3)
 
     await db.flush()
     await db.refresh(segment)
