@@ -7,7 +7,7 @@ from sqlalchemy import func, distinct, select, case
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
-from app.models.models import Assignment, AudioFile, SpeakerSegment, User
+from app.models.models import Assignment, AudioFile, Dataset, SpeakerSegment, User
 from app.schemas.schemas import BracketWordsUpdate
 
 # config/bracket_words.json is at repo root (4 levels up from this file)
@@ -86,30 +86,38 @@ async def get_dashboard(
         .limit(10)
     )).all()
 
-    # ── Language progress ──────────────────────────────────────────────────────
-    lang_files = (await db.execute(
-        select(AudioFile.language, func.count(AudioFile.id).label("total"))
-        .group_by(AudioFile.language)
+    # ── Dataset progress ───────────────────────────────────────────────────────
+    # Files per dataset (including unassigned bucket)
+    ds_files = (await db.execute(
+        select(AudioFile.dataset_id, func.count(AudioFile.id).label("total"))
+        .group_by(AudioFile.dataset_id)
         .order_by(func.count(AudioFile.id).desc())
     )).all()
 
-    lang_assign = (await db.execute(
+    ds_assign = (await db.execute(
         select(
-            AudioFile.language,
+            AudioFile.dataset_id,
             func.count(Assignment.id).label("total_assign"),
             func.sum(case((Assignment.status == "completed", 1), else_=0)).label("done_assign"),
         )
         .join(AudioFile, Assignment.audio_file_id == AudioFile.id)
-        .group_by(AudioFile.language)
+        .group_by(AudioFile.dataset_id)
     )).all()
 
-    lang_assign_map = {r.language: (r.total_assign, int(r.done_assign or 0)) for r in lang_assign}
-    language_progress = []
-    for r in lang_files:
-        total_a, done_a = lang_assign_map.get(r.language, (0, 0))
-        language_progress.append({
-            "language": r.language or "Unknown",
+    # Fetch dataset names
+    ds_name_rows = (await db.execute(select(Dataset.id, Dataset.name))).all()
+    ds_name_map = {r.id: r.name for r in ds_name_rows}
+
+    ds_assign_map = {r.dataset_id: (r.total_assign, int(r.done_assign or 0)) for r in ds_assign}
+    dataset_progress = []
+    for r in ds_files:
+        total_a, done_a = ds_assign_map.get(r.dataset_id, (0, 0))
+        dataset_progress.append({
+            "dataset_id": r.dataset_id,
+            "dataset_name": ds_name_map.get(r.dataset_id, "Unassigned") if r.dataset_id else "Unassigned",
             "total_files": r.total,
+            "total_assignments": total_a,
+            "completed_assignments": done_a,
             "completion_rate": round(done_a / total_a, 2) if total_a else 0.0,
         })
 
@@ -149,7 +157,7 @@ async def get_dashboard(
             }
             for r in recent_rows
         ],
-        "language_progress": language_progress,
+        "dataset_progress": dataset_progress,
         "annotator_summary": [
             {
                 "id": r.id,

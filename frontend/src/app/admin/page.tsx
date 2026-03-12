@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Badge,
   Box,
@@ -11,6 +12,7 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
+import { Database } from "lucide-react";
 import api from "@/lib/axios";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -31,9 +33,12 @@ interface DashboardData {
     status: string;
     created_at: string;
   }[];
-  language_progress: {
-    language: string;
+  dataset_progress: {
+    dataset_id: number | null;
+    dataset_name: string;
     total_files: number;
+    total_assignments: number;
+    completed_assignments: number;
     completion_rate: number;
   }[];
   annotator_summary: {
@@ -86,6 +91,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function AdminDashboard() {
+  const router = useRouter();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -160,35 +166,63 @@ export default function AdminDashboard() {
           </Table.Root>
         </Box>
 
-        {/* Language progress */}
+        {/* Dataset progress */}
         <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
           <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
-            <Text fontWeight="semibold" color="fg">Progress by Language</Text>
+            <Text fontWeight="semibold" color="fg">Progress by Dataset</Text>
           </Box>
           <Box px={5} py={4}>
-            {data.language_progress.map((lp) => (
-              <Box key={lp.language} mb={5}>
-                <Flex justify="space-between" mb={1}>
-                  <Text fontSize="sm" color="fg">{lp.language}</Text>
-                  <Text fontSize="xs" color="fg.muted">{lp.total_files} files</Text>
-                </Flex>
-                <Flex align="center" gap={3}>
-                  <Progress.Root
-                    value={Math.round(lp.completion_rate * 100)}
-                    flex={1}
-                    size="sm"
-                    colorPalette="blue"
-                  >
-                    <Progress.Track rounded="full">
-                      <Progress.Range />
-                    </Progress.Track>
-                  </Progress.Root>
-                  <Text fontSize="xs" color="fg.muted" w="32px" textAlign="right">
-                    {Math.round(lp.completion_rate * 100)}%
-                  </Text>
-                </Flex>
-              </Box>
-            ))}
+            {data.dataset_progress.length === 0 ? (
+              <Text fontSize="sm" color="fg.muted" fontStyle="italic">No data yet.</Text>
+            ) : (
+              data.dataset_progress.map((dp) => (
+                <Box
+                  key={dp.dataset_id ?? "unassigned"}
+                  mb={5}
+                  cursor={dp.dataset_id != null ? "pointer" : "default"}
+                  onClick={() => dp.dataset_id != null && router.push(`/admin/datasets/${dp.dataset_id}`)}
+                  _hover={dp.dataset_id != null ? { opacity: 0.8 } : {}}
+                  transition="opacity 0.15s"
+                >
+                  <Flex justify="space-between" mb={1} align="center">
+                    <Flex align="center" gap={1.5}>
+                      <Database
+                        size={11}
+                        color={dp.dataset_id != null
+                          ? "var(--chakra-colors-blue-400)"
+                          : "var(--chakra-colors-fg-muted)"}
+                      />
+                      <Text fontSize="sm" color={dp.dataset_id != null ? "fg" : "fg.muted"}>
+                        {dp.dataset_name}
+                      </Text>
+                    </Flex>
+                    <Text fontSize="xs" color="fg.muted">
+                      {dp.total_files} file{dp.total_files !== 1 ? "s" : ""}
+                    </Text>
+                  </Flex>
+                  <Flex align="center" gap={3}>
+                    <Progress.Root
+                      value={Math.round(dp.completion_rate * 100)}
+                      flex={1}
+                      size="sm"
+                      colorPalette={dp.dataset_id != null ? "blue" : "gray"}
+                    >
+                      <Progress.Track rounded="full">
+                        <Progress.Range />
+                      </Progress.Track>
+                    </Progress.Root>
+                    <Text fontSize="xs" color="fg.muted" w="32px" textAlign="right">
+                      {Math.round(dp.completion_rate * 100)}%
+                    </Text>
+                  </Flex>
+                  {dp.total_assignments > 0 && (
+                    <Text fontSize="10px" color="fg.muted" mt={0.5}>
+                      {dp.completed_assignments}/{dp.total_assignments} assignments done
+                    </Text>
+                  )}
+                </Box>
+              ))
+            )}
           </Box>
         </Box>
       </Grid>

@@ -5,6 +5,7 @@ import {
   Badge,
   Box,
   Button,
+  Collapsible,
   Dialog,
   Field,
   Flex,
@@ -16,7 +17,7 @@ import {
   Text,
   createListCollection,
 } from "@chakra-ui/react";
-import { UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, UserPlus } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -283,7 +284,10 @@ export default function ManageAnnotatorsPage() {
     }
   }
 
-  const annotators = users.filter((u) => u.role === "annotator");
+  const [disabledOpen, setDisabledOpen] = useState(false);
+
+  const active   = users.filter((u) => u.role === "annotator" &&  u.is_active);
+  const disabled = users.filter((u) => u.role === "annotator" && !u.is_active);
 
   return (
     <Box p={8} maxW="1100px">
@@ -298,6 +302,7 @@ export default function ManageAnnotatorsPage() {
         </Button>
       </Flex>
 
+      {/* Active annotators */}
       <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
         {loading ? (
           <Box px={5} py={8} textAlign="center"><Text color="fg.muted">Loading…</Text></Box>
@@ -311,8 +316,8 @@ export default function ManageAnnotatorsPage() {
               </Table.Row>
             </Table.Header>
             <Table.Body>
-              {annotators.map((u) => (
-                <Table.Row key={u.id} opacity={u.is_active ? 1 : 0.5} _hover={{ bg: "bg.muted" }}>
+              {active.map((u) => (
+                <Table.Row key={u.id} _hover={{ bg: "bg.muted" }}>
                   <Table.Cell px={4} py={3}>
                     <Text fontSize="sm" color="fg">{u.username}</Text>
                   </Table.Cell>
@@ -323,9 +328,7 @@ export default function ManageAnnotatorsPage() {
                     <Text fontSize="sm" color="blue.400">{u.trust_score.toFixed(2)}</Text>
                   </Table.Cell>
                   <Table.Cell px={4} py={3}>
-                    <Badge colorPalette={u.is_active ? "green" : "red"} size="sm">
-                      {u.is_active ? "Active" : "Disabled"}
-                    </Badge>
+                    <Badge colorPalette="green" size="sm">Active</Badge>
                   </Table.Cell>
                   <Table.Cell px={4} py={3}>
                     <Text fontSize="xs" color="fg.muted">{new Date(u.created_at).toLocaleDateString()}</Text>
@@ -333,17 +336,15 @@ export default function ManageAnnotatorsPage() {
                   <Table.Cell px={4} py={3}>
                     <Flex gap={2}>
                       <Button size="xs" colorPalette="yellow" variant="outline" onClick={() => setResetTarget(u)}>Reset PW</Button>
-                      <Button size="xs" colorPalette={u.is_active ? "red" : "green"} variant="outline" onClick={() => toggleActive(u)}>
-                        {u.is_active ? "Disable" : "Enable"}
-                      </Button>
+                      <Button size="xs" colorPalette="red" variant="outline" onClick={() => toggleActive(u)}>Disable</Button>
                     </Flex>
                   </Table.Cell>
                 </Table.Row>
               ))}
-              {annotators.length === 0 && (
+              {active.length === 0 && (
                 <Table.Row>
                   <Table.Cell colSpan={6} px={4} py={8} textAlign="center">
-                    <Text color="fg.muted">No annotators found.</Text>
+                    <Text color="fg.muted">No active annotators.</Text>
                   </Table.Cell>
                 </Table.Row>
               )}
@@ -351,6 +352,63 @@ export default function ManageAnnotatorsPage() {
           </Table.Root>
         )}
       </Box>
+
+      {/* Disabled annotators — collapsible */}
+      {!loading && disabled.length > 0 && (
+        <Collapsible.Root open={disabledOpen} onOpenChange={(d) => setDisabledOpen(d.open)} mt={4}>
+          <Collapsible.Trigger asChild>
+            <Flex
+              align="center"
+              gap={2}
+              px={3}
+              py={2}
+              rounded="md"
+              cursor="pointer"
+              color="fg.muted"
+              fontSize="sm"
+              _hover={{ bg: "bg.subtle", color: "fg" }}
+              transition="all 0.15s"
+              w="fit-content"
+            >
+              {disabledOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <Text fontSize="sm">Disabled accounts ({disabled.length})</Text>
+            </Flex>
+          </Collapsible.Trigger>
+          <Collapsible.Content>
+            <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mt={2} opacity={0.75}>
+              <Table.Root size="sm">
+                <Table.Body>
+                  {disabled.map((u) => (
+                    <Table.Row key={u.id} _hover={{ bg: "bg.muted" }}>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="sm" color="fg.muted">{u.username}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="sm" color="fg.muted">{u.segments_reviewed}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="sm" color="fg.muted">{u.trust_score.toFixed(2)}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Badge colorPalette="red" size="sm">Disabled</Badge>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="xs" color="fg.muted">{new Date(u.created_at).toLocaleDateString()}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Flex gap={2}>
+                          <Button size="xs" colorPalette="yellow" variant="outline" onClick={() => setResetTarget(u)}>Reset PW</Button>
+                          <Button size="xs" colorPalette="green" variant="outline" onClick={() => toggleActive(u)}>Enable</Button>
+                        </Flex>
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </Table.Root>
+            </Box>
+          </Collapsible.Content>
+        </Collapsible.Root>
+      )}
 
       <CreateModal
         open={showCreate}
