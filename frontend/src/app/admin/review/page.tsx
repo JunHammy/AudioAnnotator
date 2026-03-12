@@ -34,7 +34,6 @@ import ToastWizard from "@/lib/toastWizard"
 interface ReviewFile {
   id: number
   filename: string
-  subfolder: string | null
   duration: number | null
   language: string | null
   total_segments: number
@@ -643,11 +642,7 @@ export default function ReviewFinalizePage() {
                   <Text fontSize="sm" fontWeight="medium" truncate>
                     {f.filename}
                   </Text>
-                  {f.subfolder && (
-                    <Text fontSize="xs" color="fg.muted">
-                      {f.subfolder}
-                    </Text>
-                  )}
+
                   <HStack mt={1} gap={2} flexWrap="wrap">
                     <Badge size="sm" colorPalette="blue">
                       {f.emotion_annotators} annotators

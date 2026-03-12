@@ -222,9 +222,7 @@ const JSON_TYPE_OPTIONS = createListCollection({
 export default function UploadFilesPage() {
   const [queue,          setQueue]          = useState<QueueItem[]>([]);
   const [language,       setLanguage]       = useState<string[]>(["English"]);
-  const [subfolder,      setSubfolder]      = useState("");
   const [uploading,      setUploading]      = useState(false);
-  const [sfErr,          setSfErr]          = useState("");
   const [existingFiles,  setExistingFiles]  = useState<ExistingFile[]>([]);
 
   // Fetch existing DB files so we can auto-match JSON-only uploads
@@ -241,7 +239,6 @@ export default function UploadFilesPage() {
     existingMap.set(stem, f);
   }
 
-  const SAFE_NAME_RE = /^[a-zA-Z0-9_\-.]{0,100}$/;
 
   function addFiles(files: File[]) {
     const newItems: QueueItem[] = files
@@ -335,7 +332,6 @@ export default function UploadFilesPage() {
     if (g.speaker)        fd.append("speaker_json",        g.speaker.file);
     if (g.transcription)  fd.append("transcription_json",  g.transcription.file);
     fd.append("language",  language[0] ?? "");
-    fd.append("subfolder", subfolder.trim());
 
     try {
       const res = await api.post("/api/audio-files", fd, {
@@ -357,11 +353,6 @@ export default function UploadFilesPage() {
     const ready = groups.filter(groupReady);
     if (!ready.length) return;
 
-    if (subfolder && !SAFE_NAME_RE.test(subfolder)) {
-      setSfErr("Only letters, digits, hyphens, underscores, and dots allowed.");
-      return;
-    }
-    setSfErr("");
     setUploading(true);
     await Promise.all(ready.map(uploadGroup));
     setUploading(false);
@@ -418,20 +409,6 @@ export default function UploadFilesPage() {
             </Select.Root>
           </Field.Root>
 
-          <Field.Root invalid={!!sfErr} mb={5}>
-            <Field.Label color="fg" fontSize="sm">Subfolder <Text as="span" color="fg.muted">(optional)</Text></Field.Label>
-            <Input
-              value={subfolder}
-              onChange={(e) => { setSubfolder(e.target.value); setSfErr(""); }}
-              placeholder="e.g. my001005"
-              bg="bg.muted"
-              borderColor={sfErr ? "red.400" : "border"}
-              color="fg"
-              size="sm"
-            />
-            {sfErr && <Field.ErrorText fontSize="xs">{sfErr}</Field.ErrorText>}
-            <Text fontSize="xs" color="fg.muted" mt={1}>Groups files under uploads/subfolder/</Text>
-          </Field.Root>
 
           {/* Summary */}
           <Box bg="bg.muted" rounded="md" p={3} mb={4} fontSize="xs" color="fg.muted">

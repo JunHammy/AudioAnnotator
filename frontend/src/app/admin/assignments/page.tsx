@@ -24,7 +24,6 @@ import ToastWizard from "@/lib/toastWizard";
 interface AudioFile {
   id: number;
   filename: string;
-  subfolder: string | null;
   language: string | null;
   num_speakers: number | null;
   duration: number | null;

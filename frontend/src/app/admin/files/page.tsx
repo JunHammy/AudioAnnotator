@@ -40,7 +40,6 @@ import ToastWizard from "@/lib/toastWizard"
 interface AudioFile {
   id: number
   filename: string
-  subfolder: string | null
   duration: number | null
   language: string | null
   num_speakers: number | null
@@ -225,7 +224,6 @@ export default function ManageFilesPage() {
 
   // Filters
   const [search, setSearch] = useState("")
-  const [filterSubfolder, setFilterSubfolder] = useState<string[]>([])
   const [filterLanguage, setFilterLanguage] = useState<string[]>([])
   const [filterStage, setFilterStage] = useState<string[]>([])
 
@@ -271,11 +269,6 @@ export default function ManageFilesPage() {
 
   // ── Filter options ──────────────────────────────────────────────────────────
 
-  const subfolderOptions = useMemo(() =>
-    createListCollection({
-      items: [...new Set(files.map(f => f.subfolder).filter(Boolean) as string[])].map(s => ({ label: s, value: s })),
-    }), [files])
-
   const languageOptions = useMemo(() =>
     createListCollection({
       items: [...new Set(files.map(f => f.language).filter(Boolean) as string[])].map(l => ({ label: l, value: l })),
@@ -290,12 +283,11 @@ export default function ManageFilesPage() {
   const filteredRows = useMemo(() => {
     return rows.filter(row => {
       if (search && !row.file.filename.toLowerCase().includes(search.toLowerCase())) return false
-      if (filterSubfolder.length && !filterSubfolder.includes(row.file.subfolder ?? "")) return false
       if (filterLanguage.length && !filterLanguage.includes(row.file.language ?? "")) return false
       if (filterStage.length && !filterStage.includes(row.stage)) return false
       return true
     })
-  }, [rows, search, filterSubfolder, filterLanguage, filterStage])
+  }, [rows, search, filterLanguage, filterStage])
 
   // ── Summary counts ──────────────────────────────────────────────────────────
 
@@ -418,34 +410,6 @@ export default function ManageFilesPage() {
           )}
         </Box>
 
-        {/* Subfolder filter */}
-        {subfolderOptions.items.length > 0 && (
-          <Select.Root
-            collection={subfolderOptions}
-            size="sm"
-            value={filterSubfolder}
-            onValueChange={({ value }) => setFilterSubfolder(value)}
-            maxW="180px"
-          >
-            <Select.HiddenSelect />
-            <Select.Control>
-              <Select.Trigger bg="bg.muted" borderColor="border" color={filterSubfolder.length ? "fg" : "fg.muted"} minW="140px">
-                <Select.ValueText placeholder="Subfolder…" />
-              </Select.Trigger>
-            </Select.Control>
-            <Portal>
-              <Select.Positioner>
-                <Select.Content bg="bg.subtle" borderColor="border">
-                  {subfolderOptions.items.map(item => (
-                    <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
-                      {item.label}
-                    </Select.Item>
-                  ))}
-                </Select.Content>
-              </Select.Positioner>
-            </Portal>
-          </Select.Root>
-        )}
 
         {/* Language filter */}
         {languageOptions.items.length > 0 && (
@@ -504,12 +468,12 @@ export default function ManageFilesPage() {
         </Select.Root>
 
         {/* Clear all filters */}
-        {(search || filterSubfolder.length || filterLanguage.length || filterStage.length) && (
+        {(search || filterLanguage.length || filterStage.length) && (
           <Button
             size="xs"
             variant="ghost"
             color="fg.muted"
-            onClick={() => { setSearch(""); setFilterSubfolder([]); setFilterLanguage([]); setFilterStage([]) }}
+            onClick={() => { setSearch(""); setFilterLanguage([]); setFilterStage([]) }}
           >
             <X size={12} /> Clear all
           </Button>
@@ -654,11 +618,7 @@ function FileTableRow({
             <Text fontSize="xs" fontFamily="mono" color="fg" fontWeight="medium" truncate>
               {file.filename}
             </Text>
-            {file.subfolder && (
-              <Badge size="xs" colorPalette="gray" mt={0.5} variant="subtle">
-                {file.subfolder}
-              </Badge>
-            )}
+
             <JsonTypeBadges jsonTypes={file.json_types ?? []} />
             <Text fontSize="10px" color="fg.muted" mt={0.5}>
               {new Date(file.created_at).toLocaleDateString()}

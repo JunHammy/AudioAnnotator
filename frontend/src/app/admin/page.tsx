@@ -26,7 +26,6 @@ interface DashboardData {
     id: number;
     audio_file_id: number;
     filename: string;
-    subfolder: string | null;
     annotator: string;
     task_type: string;
     status: string;
@@ -144,7 +143,6 @@ export default function AdminDashboard() {
                 <Table.Row key={r.id} _hover={{ bg: "bg.muted" }}>
                   <Table.Cell px={4} py={3}>
                     <Text fontSize="sm" color="fg" fontFamily="mono">{r.filename.replace(/\.[^.]+$/, "")}</Text>
-                    {r.subfolder && <Text fontSize="xs" color="fg.muted">{r.subfolder}</Text>}
                   </Table.Cell>
                   <Table.Cell px={4} py={3}>
                     <Text fontSize="sm" color="fg">{r.annotator}</Text>
