@@ -22,6 +22,11 @@ import ToastWizard from "@/lib/toastWizard";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface Dataset {
+  id: number;
+  name: string;
+}
+
 type FileType = "audio" | "emotion_gender" | "speaker" | "transcription" | "unknown";
 type UploadStatus = "ready" | "uploading" | "done" | "error";
 
@@ -222,14 +227,19 @@ const JSON_TYPE_OPTIONS = createListCollection({
 export default function UploadFilesPage() {
   const [queue,          setQueue]          = useState<QueueItem[]>([]);
   const [language,       setLanguage]       = useState<string[]>(["English"]);
+  const [datasetId,      setDatasetId]      = useState<string[]>([]);
   const [uploading,      setUploading]      = useState(false);
   const [existingFiles,  setExistingFiles]  = useState<ExistingFile[]>([]);
+  const [datasets,       setDatasets]       = useState<Dataset[]>([]);
 
-  // Fetch existing DB files so we can auto-match JSON-only uploads
+  // Fetch existing DB files and datasets
   useEffect(() => {
     api.get("/api/audio-files")
       .then(r => setExistingFiles(r.data))
       .catch(() => {}); // non-critical — matching just won't work if this fails
+    api.get("/api/datasets")
+      .then(r => setDatasets(r.data))
+      .catch(() => {});
   }, []);
 
   // Stem → existing DB file map (strip extension from filename)
@@ -332,6 +342,7 @@ export default function UploadFilesPage() {
     if (g.speaker)        fd.append("speaker_json",        g.speaker.file);
     if (g.transcription)  fd.append("transcription_json",  g.transcription.file);
     fd.append("language",  language[0] ?? "");
+    if (datasetId[0]) fd.append("dataset_id", datasetId[0]);
 
     try {
       const res = await api.post("/api/audio-files", fd, {
@@ -408,6 +419,39 @@ export default function UploadFilesPage() {
               </Portal>
             </Select.Root>
           </Field.Root>
+
+          {datasets.length > 0 && (() => {
+            const datasetOptions = createListCollection({
+              items: [
+                { label: "No dataset", value: "" },
+                ...datasets.map(d => ({ label: d.name, value: String(d.id) })),
+              ],
+            });
+            return (
+              <Field.Root mb={4}>
+                <Field.Label color="fg" fontSize="sm">Dataset</Field.Label>
+                <Select.Root collection={datasetOptions} value={datasetId} onValueChange={(d) => setDatasetId(d.value)} size="sm">
+                  <Select.HiddenSelect />
+                  <Select.Control>
+                    <Select.Trigger bg="bg.muted" borderColor="border" color={datasetId[0] ? "fg" : "fg.muted"}>
+                      <Select.ValueText placeholder="None" />
+                    </Select.Trigger>
+                  </Select.Control>
+                  <Portal>
+                    <Select.Positioner>
+                      <Select.Content bg="bg.subtle" borderColor="border">
+                        {datasetOptions.items.map((item) => (
+                          <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                            {item.label}
+                          </Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Portal>
+                </Select.Root>
+              </Field.Root>
+            );
+          })()}
 
 
           {/* Summary */}

@@ -89,6 +89,65 @@ class UserUpdate(BaseModel):
         return v
 
 
+# ─── Datasets ─────────────────────────────────────────────────────────────────
+
+class DatasetCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Dataset name cannot be empty.")
+        if len(v) > 255:
+            raise ValueError("Dataset name must be 255 characters or fewer.")
+        return v
+
+
+class DatasetUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Dataset name cannot be empty.")
+        return v
+
+
+class DatasetResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: int
+    name: str
+    description: Optional[str]
+    created_by: int
+    created_at: datetime
+    file_count: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_file_count(cls, data):
+        if hasattr(data, "__table__"):
+            columns = {c.key for c in data.__table__.columns}
+            obj_dict = {col: getattr(data, col, None) for col in columns}
+            try:
+                obj_dict["file_count"] = len(data.audio_files)
+            except Exception:
+                obj_dict["file_count"] = 0
+            return obj_dict
+        return data
+
+
+class DatasetFilesUpdate(BaseModel):
+    audio_file_ids: list[int]
+
+
 # ─── Audio Files ──────────────────────────────────────────────────────────────
 
 class AudioFileResponse(BaseModel):
@@ -96,6 +155,7 @@ class AudioFileResponse(BaseModel):
 
     id: int
     filename: str
+    dataset_id: Optional[int]
     duration: Optional[float]
     language: Optional[str]
     num_speakers: Optional[int]

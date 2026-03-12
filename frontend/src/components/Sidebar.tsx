@@ -8,7 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ClipboardList,
-  Files,
+  Database,
   LogOut,
   Mic2,
   ListTodo,
@@ -30,7 +30,7 @@ interface NavItem {
 const ADMIN_NAV: NavItem[] = [
   { label: "Dashboard",          href: "/admin",                    icon: <BarChart2     size={18} /> },
   { label: "Upload Files",        href: "/admin/upload",             icon: <Upload        size={18} /> },
-  { label: "Manage Files",        href: "/admin/files",              icon: <Files         size={18} /> },
+  { label: "Datasets",            href: "/admin/datasets",           icon: <Database      size={18} /> },
   { label: "Manage Annotators",   href: "/admin/annotators",         icon: <Users         size={18} /> },
   { label: "Assign Tasks",        href: "/admin/assignments",        icon: <ClipboardList size={18} /> },
   { label: "Review & Finalize",   href: "/admin/review",             icon: <CheckSquare   size={18} /> },

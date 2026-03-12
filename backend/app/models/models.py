@@ -26,11 +26,25 @@ class User(Base):
     uploaded_files = relationship("AudioFile", back_populates="uploader", foreign_keys="AudioFile.uploaded_by")
 
 
+class Dataset(Base):
+    __tablename__ = "datasets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    creator = relationship("User")
+    audio_files = relationship("AudioFile", back_populates="dataset")
+
+
 class AudioFile(Base):
     __tablename__ = "audio_files"
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)
+    dataset_id = Column(Integer, ForeignKey("datasets.id"), nullable=True)
     duration = Column(Float, nullable=True)
     language = Column(String(50), nullable=True)
     num_speakers = Column(Integer, nullable=True)
@@ -46,6 +60,7 @@ class AudioFile(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     uploader = relationship("User", back_populates="uploaded_files", foreign_keys=[uploaded_by])
+    dataset = relationship("Dataset", back_populates="audio_files")
     assignments = relationship("Assignment", back_populates="audio_file")
     speaker_segments = relationship("SpeakerSegment", back_populates="audio_file")
     transcription_segments = relationship("TranscriptionSegment", back_populates="audio_file")

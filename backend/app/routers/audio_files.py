@@ -15,7 +15,7 @@ from app.auth.dependencies import get_current_user, require_admin
 from app.config import settings
 from app.database import get_db
 from app.models.models import (
-    Assignment, AudioFile, FinalAnnotation, OriginalJSONStore,
+    Assignment, AudioFile, Dataset, FinalAnnotation, OriginalJSONStore,
     SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
 )
 from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate
@@ -109,6 +109,7 @@ async def upload_audio_file(
     speaker_json:        Optional[UploadFile] = File(default=None),
     transcription_json:  Optional[UploadFile] = File(default=None),
     language:            str                  = Form(""),
+    dataset_id:          Optional[int]        = Form(default=None),
     db:    AsyncSession  = Depends(get_db),
     admin: User          = Depends(require_admin),
 ):
@@ -167,9 +168,16 @@ async def upload_audio_file(
         if emo_wins_raw:
             duration_val = max(w.get("end_time", 0) for w in emo_wins_raw)
 
+    # ── Validate dataset if provided ──────────────────────────────────────────
+    if dataset_id is not None:
+        ds_check = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+        if not ds_check.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Dataset {dataset_id} not found.")
+
     # ── Create AudioFile record ───────────────────────────────────────────────
     db_file = AudioFile(
         filename=audio_name,
+        dataset_id=dataset_id,
         language=language.strip() or None,
         num_speakers=num_speakers,
         duration=round(duration_val, 2) if duration_val else None,
@@ -400,6 +408,34 @@ async def delete_audio_file(
             file_path.unlink()
     except OSError:
         pass  # Log-worthy but not fatal — DB record is already gone
+
+
+@router.patch("/{file_id}/dataset", response_model=AudioFileResponse)
+async def set_file_dataset(
+    file_id: int,
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Assign or unassign a file to a dataset. Body: { dataset_id: int | null }"""
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    new_dataset_id = body.get("dataset_id")
+    if new_dataset_id is not None:
+        ds_check = await db.execute(select(Dataset).where(Dataset.id == new_dataset_id))
+        if not ds_check.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail=f"Dataset {new_dataset_id} not found.")
+    af.dataset_id = new_dataset_id
+    await db.flush()
+    await db.refresh(af)
+    return af
 
 
 @router.patch("/{file_id}/lock", response_model=AudioFileResponse)

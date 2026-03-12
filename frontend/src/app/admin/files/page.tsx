@@ -24,6 +24,7 @@ import {
   ArrowRight,
   CheckCircle2,
   ClipboardList,
+  Database,
   FileAudio2,
   Lock,
   RefreshCw,
@@ -37,9 +38,15 @@ import ToastWizard from "@/lib/toastWizard"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+interface Dataset {
+  id: number
+  name: string
+}
+
 interface AudioFile {
   id: number
   filename: string
+  dataset_id: number | null
   duration: number | null
   language: string | null
   num_speakers: number | null
@@ -217,6 +224,7 @@ export default function ManageFilesPage() {
 
   const [files, setFiles] = useState<AudioFile[]>([])
   const [assignments, setAssignments] = useState<Assignment[]>([])
+  const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [lockLoading, setLockLoading] = useState<Record<string, boolean>>({})
   const [deleteTarget, setDeleteTarget] = useState<AudioFile | null>(null)
@@ -226,16 +234,19 @@ export default function ManageFilesPage() {
   const [search, setSearch] = useState("")
   const [filterLanguage, setFilterLanguage] = useState<string[]>([])
   const [filterStage, setFilterStage] = useState<string[]>([])
+  const [filterDataset, setFilterDataset] = useState<string[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [filesRes, assignRes] = await Promise.all([
+      const [filesRes, assignRes, datasetsRes] = await Promise.all([
         api.get("/api/audio-files"),
         api.get("/api/assignments"),
+        api.get("/api/datasets"),
       ])
       setFiles(filesRes.data)
       setAssignments(assignRes.data)
+      setDatasets(datasetsRes.data)
     } catch {
       ToastWizard.standard("error", "Failed to load files")
     } finally {
@@ -269,10 +280,20 @@ export default function ManageFilesPage() {
 
   // ── Filter options ──────────────────────────────────────────────────────────
 
+  const datasetMap = useMemo(() => new Map(datasets.map(d => [d.id, d.name])), [datasets])
+
   const languageOptions = useMemo(() =>
     createListCollection({
       items: [...new Set(files.map(f => f.language).filter(Boolean) as string[])].map(l => ({ label: l, value: l })),
     }), [files])
+
+  const datasetOptions = useMemo(() =>
+    createListCollection({
+      items: [
+        { label: "No dataset", value: "none" },
+        ...datasets.map(d => ({ label: d.name, value: String(d.id) })),
+      ],
+    }), [datasets])
 
   const stageOptions = createListCollection({
     items: (Object.entries(STAGE_META) as [Stage, typeof STAGE_META[Stage]][]).map(([v, m]) => ({ label: m.label, value: v })),
@@ -285,9 +306,13 @@ export default function ManageFilesPage() {
       if (search && !row.file.filename.toLowerCase().includes(search.toLowerCase())) return false
       if (filterLanguage.length && !filterLanguage.includes(row.file.language ?? "")) return false
       if (filterStage.length && !filterStage.includes(row.stage)) return false
+      if (filterDataset.length) {
+        const dsVal = row.file.dataset_id == null ? "none" : String(row.file.dataset_id)
+        if (!filterDataset.includes(dsVal)) return false
+      }
       return true
     })
-  }, [rows, search, filterLanguage, filterStage])
+  }, [rows, search, filterLanguage, filterStage, filterDataset])
 
   // ── Summary counts ──────────────────────────────────────────────────────────
 
@@ -467,13 +492,42 @@ export default function ManageFilesPage() {
           </Portal>
         </Select.Root>
 
+        {/* Dataset filter */}
+        {datasetOptions.items.length > 1 && (
+          <Select.Root
+            collection={datasetOptions}
+            size="sm"
+            value={filterDataset}
+            onValueChange={({ value }) => setFilterDataset(value)}
+            maxW="180px"
+          >
+            <Select.HiddenSelect />
+            <Select.Control>
+              <Select.Trigger bg="bg.muted" borderColor="border" color={filterDataset.length ? "fg" : "fg.muted"} minW="150px">
+                <Select.ValueText placeholder="Dataset…" />
+              </Select.Trigger>
+            </Select.Control>
+            <Portal>
+              <Select.Positioner>
+                <Select.Content bg="bg.subtle" borderColor="border">
+                  {datasetOptions.items.map(item => (
+                    <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                      {item.label}
+                    </Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Portal>
+          </Select.Root>
+        )}
+
         {/* Clear all filters */}
-        {(search || filterLanguage.length || filterStage.length) && (
+        {(search || filterLanguage.length || filterStage.length || filterDataset.length) && (
           <Button
             size="xs"
             variant="ghost"
             color="fg.muted"
-            onClick={() => { setSearch(""); setFilterLanguage([]); setFilterStage([]) }}
+            onClick={() => { setSearch(""); setFilterLanguage([]); setFilterStage([]); setFilterDataset([]) }}
           >
             <X size={12} /> Clear all
           </Button>
@@ -512,6 +566,7 @@ export default function ManageFilesPage() {
                 <FileTableRow
                   key={row.file.id}
                   row={row}
+                  datasetMap={datasetMap}
                   lockLoading={lockLoading}
                   onToggleLock={toggleLock}
                   onNavigate={router.push}
@@ -588,12 +643,14 @@ export default function ManageFilesPage() {
 
 function FileTableRow({
   row,
+  datasetMap,
   lockLoading,
   onToggleLock,
   onNavigate,
   onDelete,
 }: {
   row: FileRow
+  datasetMap: Map<number, string>
   lockLoading: Record<string, boolean>
   onToggleLock: (fileId: number, taskType: string, locked: boolean) => void
   onNavigate: (href: string) => void
@@ -618,7 +675,14 @@ function FileTableRow({
             <Text fontSize="xs" fontFamily="mono" color="fg" fontWeight="medium" truncate>
               {file.filename}
             </Text>
-
+            {file.dataset_id != null && (
+              <HStack gap="3px" mt="2px">
+                <Database size={9} color="var(--chakra-colors-blue-400)" />
+                <Text fontSize="9px" color="blue.400" truncate maxW="160px">
+                  {datasetMap.get(file.dataset_id) ?? `Dataset #${file.dataset_id}`}
+                </Text>
+              </HStack>
+            )}
             <JsonTypeBadges jsonTypes={file.json_types ?? []} />
             <Text fontSize="10px" color="fg.muted" mt={0.5}>
               {new Date(file.created_at).toLocaleDateString()}
