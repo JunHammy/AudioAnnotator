@@ -13,7 +13,7 @@ Expects the following layout under AudioAnnotator/data/:
         speaker/         <name>.json  — speaker diarization (speaker_0 → speaker_1 on import)
         transcription/   <name>.json  — transcription text segments
 
-The speaker JSON's "subfolder" field determines the AudioFile.subfolder group.
+Audio files are stored flat in the uploads/ directory.
 """
 
 import asyncio
@@ -103,11 +103,10 @@ def _overlapping_window(seg_start: float, seg_end: float, windows: list) -> dict
 
 def _parse_speaker_json(data: dict) -> tuple:
     """
-    Returns (subfolder, num_speakers, duration, segments).
+    Returns (num_speakers, duration, segments).
     Segments: list of {start_time, end_time, speaker_label}.
     speaker_0 → speaker_1.
     """
-    subfolder = data.get("subfolder", "")
     num_speakers = data.get("num_speakers", 0)
     segs_raw = data.get("speakers", [])
     segs = [
@@ -122,7 +121,7 @@ def _parse_speaker_json(data: dict) -> tuple:
     if not num_speakers and segs:
         labels = {s["speaker_label"] for s in segs}
         num_speakers = len(labels)
-    return subfolder, num_speakers, round(duration, 3), segs
+    return num_speakers, round(duration, 3), segs
 
 
 def _parse_emotion_gender_json(data: dict) -> list:
@@ -216,7 +215,6 @@ async def import_audio_files():
             trans_path   = trans_dir   / f"{stem}.json"
 
             # ── Parse JSONs ──────────────────────────────────────────────────
-            subfolder    = stem.rsplit("_", 1)[0] if "_" in stem else stem
             num_speakers = 1
             duration     = 0.0
             spk_segs     = []
@@ -230,7 +228,7 @@ async def import_audio_files():
             if speaker_path.exists():
                 try:
                     spk_data = json.loads(speaker_path.read_text(encoding="utf-8"))
-                    subfolder, num_speakers, duration, spk_segs = _parse_speaker_json(spk_data)
+                    num_speakers, duration, spk_segs = _parse_speaker_json(spk_data)
                 except Exception as exc:
                     info(f"  speaker parse error ({stem}): {exc}")
 
@@ -250,17 +248,15 @@ async def import_audio_files():
                 except Exception as exc:
                     info(f"  transcription parse error ({stem}): {exc}")
 
-            # ── Copy audio to uploads/<subfolder>/ ───────────────────────────
-            dest_dir  = upload_dir / subfolder
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_file = dest_dir / audio.name
+            # ── Copy audio to uploads/ ───────────────────────────────────────
+            upload_dir.mkdir(parents=True, exist_ok=True)
+            dest_file = upload_dir / audio.name
             if not dest_file.exists():
                 shutil.copy2(audio, dest_file)
 
             # ── Create AudioFile record ──────────────────────────────────────
             af = AudioFile(
                 filename=audio.name,
-                subfolder=subfolder,
                 duration=round(duration, 2),
                 language=language,
                 num_speakers=num_speakers,
@@ -306,7 +302,7 @@ async def import_audio_files():
                 ))
 
             info(
-                f"+ {subfolder}/{audio.name}  ({num_speakers} spk, {duration:.1f}s, {language})"
+                f"+ {audio.name}  ({num_speakers} spk, {duration:.1f}s, {language})"
                 f"  →  {len(spk_segs)} speaker segs, {len(trans_segs)} transcription segs"
             )
             imported += 1

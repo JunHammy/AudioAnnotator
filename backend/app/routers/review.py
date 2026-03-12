@@ -64,7 +64,6 @@ async def list_review_files(
         out.append({
             "id": af.id,
             "filename": af.filename,
-            "subfolder": af.subfolder,
             "duration": af.duration,
             "language": af.language,
             "total_segments": total_segments,

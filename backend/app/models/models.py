@@ -31,7 +31,6 @@ class AudioFile(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)
-    subfolder = Column(String(255), nullable=True)
     duration = Column(Float, nullable=True)
     language = Column(String(50), nullable=True)
     num_speakers = Column(Integer, nullable=True)

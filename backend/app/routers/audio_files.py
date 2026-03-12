@@ -108,7 +108,6 @@ async def upload_audio_file(
     emotion_gender_json: Optional[UploadFile] = File(default=None),
     speaker_json:        Optional[UploadFile] = File(default=None),
     transcription_json:  Optional[UploadFile] = File(default=None),
-    subfolder:           str                  = Form(""),
     language:            str                  = Form(""),
     db:    AsyncSession  = Depends(get_db),
     admin: User          = Depends(require_admin),
@@ -118,18 +117,13 @@ async def upload_audio_file(
     Only the audio file is required — JSONs are optional.
     Providing a subset of JSONs seeds only those segment types.
     """
-    # ── Validate and sanitize filenames / subfolder ───────────────────────────
+    # ── Validate and sanitize filename ────────────────────────────────────────
     audio_name = _safe_name(audio.filename or "", "audio filename")
     if Path(audio_name).suffix.lower() not in _ALLOWED_AUDIO:
         raise HTTPException(status_code=400, detail="Audio file must be .wav or .mp3.")
 
-    safe_subfolder = _safe_name(subfolder, "subfolder") if subfolder.strip() else None
-
     base_upload = Path(settings.upload_dir).resolve()
-    if safe_subfolder:
-        dest_dir = _resolve_safe(base_upload, safe_subfolder)
-    else:
-        dest_dir = base_upload
+    dest_dir = base_upload
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = _resolve_safe(dest_dir, audio_name)
 
@@ -176,7 +170,6 @@ async def upload_audio_file(
     # ── Create AudioFile record ───────────────────────────────────────────────
     db_file = AudioFile(
         filename=audio_name,
-        subfolder=safe_subfolder,
         language=language.strip() or None,
         num_speakers=num_speakers,
         duration=round(duration_val, 2) if duration_val else None,

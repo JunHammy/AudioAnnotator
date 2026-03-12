@@ -96,7 +96,6 @@ class AudioFileResponse(BaseModel):
 
     id: int
     filename: str
-    subfolder: Optional[str]
     duration: Optional[float]
     language: Optional[str]
     num_speakers: Optional[int]
