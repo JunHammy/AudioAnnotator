@@ -65,14 +65,21 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 export default function AnnotatorTasksPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [loading,     setLoading]     = useState(true);
-  const [filter,      setFilter]      = useState<"all" | "pending" | "in_progress" | "completed">("all");
+  const [assignments,  setAssignments]  = useState<Assignment[]>([]);
+  const [filenameMap,  setFilenameMap]  = useState<Record<number, string>>({});
+  const [loading,      setLoading]      = useState(true);
+  const [filter,       setFilter]       = useState<"all" | "pending" | "in_progress" | "completed">("all");
 
   useEffect(() => {
-    api.get("/api/assignments/")
-      .then((r) => setAssignments(r.data))
-      .finally(() => setLoading(false));
+    Promise.all([
+      api.get("/api/assignments/"),
+      api.get("/api/audio-files"),
+    ]).then(([aRes, fRes]) => {
+      setAssignments(aRes.data);
+      const map: Record<number, string> = {};
+      for (const f of fRes.data) map[f.id] = f.filename;
+      setFilenameMap(map);
+    }).finally(() => setLoading(false));
   }, []);
 
   const stats = {
@@ -154,7 +161,7 @@ export default function AnnotatorTasksPage() {
                   <Table.Row key={fileId} _hover={{ bg: "bg.muted" }}>
                     <Table.Cell px={4} py={3}>
                       <Text fontSize="sm" color="fg" fontFamily="mono">
-                        file_{fileId}
+                        {filenameMap[fileId] ?? `file_${fileId}`}
                       </Text>
                     </Table.Cell>
                     <Table.Cell px={4} py={3}>

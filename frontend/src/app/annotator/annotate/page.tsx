@@ -349,6 +349,7 @@ function SegmentEditor({
   const [isAmbiguous, setIsAmbiguous] = useState<boolean>(
     (selection.segment as Segment).is_ambiguous ?? false
   )
+  const [alignedTo, setAlignedTo] = useState<Segment | null>(null)
 
   const { type, segment } = selection
 
@@ -707,17 +708,19 @@ function SegmentEditor({
                   collection={createListCollection({
                     items: speakerSegments.map(s => ({
                       label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`,
-                      value: `${s.start_time}|${s.end_time}`,
+                      value: String(s.id),
                     })),
                   })}
                   size="sm"
-                  value={[]}
+                  value={alignedTo ? [String(alignedTo.id)] : []}
                   onValueChange={({ value }) => {
                     const v = value[0]
                     if (!v) return
-                    const [st, et] = v.split("|").map(Number)
-                    setStartTime(st)
-                    setEndTime(et)
+                    const seg = speakerSegments.find(s => String(s.id) === v)
+                    if (!seg) return
+                    setStartTime(seg.start_time)
+                    setEndTime(seg.end_time)
+                    setAlignedTo(seg)
                   }}
                 >
                   <Select.Trigger>
@@ -725,26 +728,28 @@ function SegmentEditor({
                   </Select.Trigger>
                   <Select.Positioner>
                     <Select.Content>
-                      {speakerSegments.map(s => {
-                        const val = `${s.start_time}|${s.end_time}`
-                        return (
-                          <Select.Item key={s.id} item={{ label: val, value: val }}>
-                            <Box
-                              display="inline-block"
-                              w="8px"
-                              h="8px"
-                              rounded="full"
-                              bg={speakerColor(s.speaker_label)}
-                              mr={2}
-                              flexShrink={0}
-                            />
-                            {s.speaker_label ?? "?"} ({fmtTime(s.start_time)}–{fmtTime(s.end_time)})
-                          </Select.Item>
-                        )
-                      })}
+                      {speakerSegments.map(s => (
+                        <Select.Item key={s.id} item={{ label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`, value: String(s.id) }}>
+                          <Box
+                            display="inline-block"
+                            w="8px"
+                            h="8px"
+                            rounded="full"
+                            bg={speakerColor(s.speaker_label)}
+                            mr={2}
+                            flexShrink={0}
+                          />
+                          {s.speaker_label ?? "?"} ({fmtTime(s.start_time)}–{fmtTime(s.end_time)})
+                        </Select.Item>
+                      ))}
                     </Select.Content>
                   </Select.Positioner>
                 </Select.Root>
+                {alignedTo && (
+                  <Box mt={1} px={2} py={1} bg="blue.900" borderWidth="1px" borderColor="blue.700" rounded="sm" fontSize="xs" color="blue.300">
+                    Aligned to <strong>{alignedTo.speaker_label ?? "?"}</strong> · {fmtTime(alignedTo.start_time)}–{fmtTime(alignedTo.end_time)}
+                  </Box>
+                )}
               </Field.Root>
             )}
 
@@ -846,6 +851,9 @@ function AnnotateInner() {
   const [selection, setSelection] = useState<Selection | null>(null)
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
   const [addingSegment, setAddingSegment] = useState(false)
+  const [addingSpeakerMode, setAddingSpeakerMode] = useState(false)
+  const [newSpeakerName, setNewSpeakerName] = useState("")
+  const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set())
   const [hasUpdates, setHasUpdates] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -968,6 +976,43 @@ function AnnotateInner() {
     }
   }, [data])
 
+  // Group transcription segments by the speaker with the most overlap
+  const { groupedTranscription, ungroupedTranscription } = useMemo(() => {
+    if (!data) return { groupedTranscription: new Map<string | null, TranscriptSegment[]>(), ungroupedTranscription: [] as TranscriptSegment[] }
+    const grouped = new Map<string | null, TranscriptSegment[]>()
+    const ungrouped: TranscriptSegment[] = []
+    for (const t of data.transcription_segments) {
+      let maxOverlap = 0
+      let bestLabel: string | null = null
+      for (const s of data.speaker_segments) {
+        const overlap = Math.min(t.end_time, s.end_time) - Math.max(t.start_time, s.start_time)
+        if (overlap > maxOverlap) { maxOverlap = overlap; bestLabel = s.speaker_label }
+      }
+      if (bestLabel !== null && maxOverlap > 0) {
+        if (!grouped.has(bestLabel)) grouped.set(bestLabel, [])
+        grouped.get(bestLabel)!.push(t)
+      } else {
+        ungrouped.push(t)
+      }
+    }
+    return { groupedTranscription: grouped, ungroupedTranscription: ungrouped }
+  }, [data])
+
+  // Open all speaker accordions when file loads
+  useEffect(() => {
+    if (!data) return
+    const labels = [...new Set(data.speaker_segments.map(s => s.speaker_label ?? "__null__"))]
+    setOpenAccordions(new Set(labels))
+  }, [data?.audio_file.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleAccordion = (key: string) => {
+    setOpenAccordions(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+  }
+
   // Populate WaveSurfer regions whenever speaker segments or waveform readiness change
   useEffect(() => {
     if (!waveformReady || !data || !playerRef.current || !isSpeakerAnnotator) return
@@ -1077,6 +1122,30 @@ function AnnotateInner() {
       ToastWizard.standard("success", "Segment added at playhead")
     } catch {
       ToastWizard.standard("error", "Failed to add segment")
+    } finally {
+      setAddingSegment(false)
+    }
+  }
+
+  const addSpeaker = async (label: string) => {
+    if (!data || !label.trim()) return
+    setAddingSegment(true)
+    try {
+      const currentT = playerRef.current?.getCurrentTime() ?? 0
+      const { start, end } = smartPlacement(data.speaker_segments, currentT, waveformDuration)
+      await api.post("/api/segments/speaker", {
+        audio_file_id: data.audio_file.id,
+        start_time: start,
+        end_time: end,
+        speaker_label: label.trim(),
+        gender: "unk",
+      })
+      setAddingSpeakerMode(false)
+      setNewSpeakerName("")
+      await load()
+      ToastWizard.standard("success", `Speaker "${label.trim()}" added`)
+    } catch {
+      ToastWizard.standard("error", "Failed to add speaker")
     } finally {
       setAddingSegment(false)
     }
@@ -1265,8 +1334,52 @@ function AnnotateInner() {
           </HStack>
         </Box>
         <HStack ml="auto" gap={2} flexWrap="wrap">
-          {/* Add Segment — only when annotator has the speaker task */}
+          {/* Add Speaker — only when annotator has the speaker task */}
           {hasTask("speaker") && (
+            addingSpeakerMode ? (
+              <HStack gap={1}>
+                <Input
+                  size="sm"
+                  placeholder="e.g. speaker_3"
+                  value={newSpeakerName}
+                  onChange={e => setNewSpeakerName(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && newSpeakerName.trim()) addSpeaker(newSpeakerName)
+                    if (e.key === "Escape") { setAddingSpeakerMode(false); setNewSpeakerName("") }
+                  }}
+                  autoFocus
+                  w="140px"
+                  bg="bg.muted"
+                  borderColor="border"
+                  color="fg"
+                />
+                <Button
+                  size="sm"
+                  colorPalette="teal"
+                  disabled={!newSpeakerName.trim()}
+                  loading={addingSegment}
+                  onClick={() => addSpeaker(newSpeakerName)}
+                >
+                  Add
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setAddingSpeakerMode(false); setNewSpeakerName("") }}>
+                  ✕
+                </Button>
+              </HStack>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                colorPalette="teal"
+                onClick={() => setAddingSpeakerMode(true)}
+              >
+                <Plus size={14} />
+                Add Speaker
+              </Button>
+            )
+          )}
+          {/* Add Segment — only when annotator has the speaker task */}
+          {hasTask("speaker") && !addingSpeakerMode && (
             <Button
               size="sm"
               variant="outline"
@@ -1334,100 +1447,144 @@ function AnnotateInner() {
             height={80}
           />
 
-          {/* Segment tracks — each track only renders if annotator has that task */}
+          {/* Segment tracks */}
           {data.assignments.length > 0 && (
             <VStack align="stretch" gap={3}>
-              {/* Time ruler — only shown once real duration is known */}
-              {duration > 0 && <Box position="relative" h="16px">
-                {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => i * 10).map(t => (
-                  <Box
-                    key={t}
-                    position="absolute"
-                    left={`${(t / duration) * 100}%`}
-                    transform="translateX(-50%)"
-                  >
-                    <Text fontSize="9px" color="fg.muted" userSelect="none">
-                      {fmtTime(t)}
-                    </Text>
-                  </Box>
-                ))}
-              </Box>}
-
-              {hasTask("speaker") && (
-                <Box>
-                  <HStack mb={1} gap={2} align="center">
-                    <Text fontSize="xs" fontWeight="medium" color="fg.muted" userSelect="none">
-                      Speaker
-                    </Text>
-                    {segmentMismatches.speaker > 0 && (
-                      <Badge size="xs" colorPalette="orange">
-                        {segmentMismatches.speaker} boundary mismatch{segmentMismatches.speaker > 1 ? "es" : ""}
-                      </Badge>
-                    )}
-                  </HStack>
-                  <VStack align="stretch" gap={1}>
-                    {uniqueSpeakerLanes.map(label => (
-                      <SegmentTrack
-                        key={label ?? "__null__"}
-                        label={label ?? "Unknown speaker"}
-                        segments={data.speaker_segments.filter(s => s.speaker_label === label)}
-                        duration={duration}
-                        currentTime={currentTime}
-                        selectedId={
-                          selection?.type === "speaker" ? selection.segment.id : undefined
-                        }
-                        getColor={(s: Segment) => speakerColor(s.speaker_label)}
-                        getLabel={(s: Segment) => s.speaker_label ?? "?"}
-                        onSelect={s => setSelection({ type: "speaker", segment: s })}
-                      />
-                    ))}
-                  </VStack>
+              {/* Time ruler */}
+              {duration > 0 && (
+                <Box position="relative" h="16px">
+                  {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => i * 10).map(t => (
+                    <Box key={t} position="absolute" left={`${(t / duration) * 100}%`} transform="translateX(-50%)">
+                      <Text fontSize="9px" color="fg.muted" userSelect="none">{fmtTime(t)}</Text>
+                    </Box>
+                  ))}
                 </Box>
               )}
 
-              {(hasTask("gender") || hasTask("speaker")) && (
+              {/* Per-speaker accordion sections */}
+              {(hasTask("speaker") || hasTask("transcription") || hasTask("gender")) && uniqueSpeakerLanes.map(label => {
+                const key = label ?? "__null__"
+                const isOpen = openAccordions.has(key)
+                const speakerSegs = data.speaker_segments.filter(s => s.speaker_label === label)
+                const currentGender = getGenderForSpeaker(label ?? "") || "unk"
+                const trSegs = hasTask("transcription") ? (groupedTranscription.get(label) ?? []) : []
+                return (
+                  <Box key={key} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">
+                    {/* Accordion header */}
+                    <HStack
+                      px={3} py={2} gap={3} cursor="pointer" userSelect="none"
+                      _hover={{ bg: "bg.muted" }}
+                      onClick={() => toggleAccordion(key)}
+                    >
+                      <Box w="10px" h="10px" rounded="full" bg={speakerColor(label)} flexShrink={0} />
+                      <Text fontSize="sm" fontWeight="semibold" color="fg" flex={1}>{label ?? "Unknown"}</Text>
+                      <Text fontSize="xs" color="fg.muted">{speakerSegs.length} seg{speakerSegs.length !== 1 ? "s" : ""}</Text>
+
+                      {/* Gender pills */}
+                      {(hasTask("gender") || hasTask("speaker")) && (
+                        <HStack gap={1} onClick={e => e.stopPropagation()}>
+                          {(["Male", "Female", "Mixed", "unk"] as const).map(g => (
+                            <Box
+                              key={g}
+                              as="button"
+                              px={2} py="1px" fontSize="10px" rounded="full" borderWidth="1px"
+                              borderColor={currentGender === g ? genderColor(g) : "border"}
+                              bg={currentGender === g ? genderColor(g) + "33" : "transparent"}
+                              color={currentGender === g ? genderColor(g) : "fg.muted"}
+                              cursor="pointer"
+                              transition="all 0.1s"
+                              title={g === "unk" ? "Unknown" : g}
+                              onClick={() => { if (label) propagateGender(label, g, -1) }}
+                            >
+                              {g === "unk" ? "?" : g}
+                            </Box>
+                          ))}
+                        </HStack>
+                      )}
+
+                      <Text fontSize="xs" color="fg.muted">{isOpen ? "▲" : "▼"}</Text>
+                    </HStack>
+
+                    {/* Accordion body */}
+                    {isOpen && (
+                      <Box px={3} pb={3} pt={2} display="flex" flexDir="column" gap={2} borderTopWidth="1px" borderColor="border">
+                        {hasTask("speaker") && (
+                          <SegmentTrack
+                            label="Segments"
+                            segments={speakerSegs}
+                            duration={duration}
+                            currentTime={currentTime}
+                            selectedId={selection?.type === "speaker" ? selection.segment.id : undefined}
+                            getColor={(s: Segment) => speakerColor(s.speaker_label)}
+                            getLabel={(s: Segment) => s.speaker_label ?? "?"}
+                            onSelect={s => setSelection({ type: "speaker", segment: s })}
+                          />
+                        )}
+                        {hasTask("transcription") && (
+                          trSegs.length > 0 ? (
+                            <SegmentTrack
+                              label="Transcription"
+                              segments={trSegs}
+                              duration={duration}
+                              currentTime={currentTime}
+                              selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
+                              getColor={(_: TranscriptSegment) => "#374151"}
+                              getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
+                              onSelect={s => setSelection({ type: "transcription", segment: s })}
+                            />
+                          ) : (
+                            <Text fontSize="xs" color="fg.subtle" fontStyle="italic" py={1}>No transcription segments in this speaker's range.</Text>
+                          )
+                        )}
+                      </Box>
+                    )}
+                  </Box>
+                )
+              })}
+
+              {/* Unmatched transcription segments (no speaker overlap) */}
+              {hasTask("transcription") && ungroupedTranscription.length > 0 && (
+                <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" p={3}>
+                  <SegmentTrack
+                    label="Transcription (unmatched)"
+                    segments={ungroupedTranscription}
+                    duration={duration}
+                    currentTime={currentTime}
+                    selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
+                    getColor={(_: TranscriptSegment) => "#374151"}
+                    getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
+                    onSelect={s => setSelection({ type: "transcription", segment: s })}
+                    warningCount={segmentMismatches.transcription}
+                  />
+                </Box>
+              )}
+
+              {/* Transcription-only task (no speaker sections rendered above) */}
+              {hasTask("transcription") && !hasTask("speaker") && !hasTask("gender") && uniqueSpeakerLanes.length === 0 && (
                 <SegmentTrack
-                  label="Gender"
-                  segments={data.speaker_segments}
+                  label="Transcription"
+                  segments={data.transcription_segments}
                   duration={duration}
                   currentTime={currentTime}
-                  selectedId={undefined}
-                  getColor={(s: Segment) => genderColor(s.gender)}
-                  getLabel={(s: Segment) => s.gender ?? "unk"}
-                  onSelect={s => setSelection({ type: "speaker", segment: s })}
+                  selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
+                  getColor={(_: TranscriptSegment) => "#374151"}
+                  getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
+                  onSelect={s => setSelection({ type: "transcription", segment: s })}
+                  warningCount={segmentMismatches.transcription}
                 />
               )}
 
+              {/* Emotion track — shown below all speaker sections */}
               {hasTask("emotion") && !emotionGated && (
                 <SegmentTrack
                   label="Emotion (my annotations)"
                   segments={data.emotion_segments}
                   duration={duration}
                   currentTime={currentTime}
-                  selectedId={
-                    selection?.type === "emotion" ? selection.segment.id : undefined
-                  }
+                  selectedId={selection?.type === "emotion" ? selection.segment.id : undefined}
                   getColor={(s: Segment) => emotionColor(s.emotion)}
                   getLabel={(s: Segment) => s.emotion ?? "—"}
                   onSelect={s => setSelection({ type: "emotion", segment: s })}
-                />
-              )}
-
-              {hasTask("transcription") && (
-                <SegmentTrack
-                  label="Transcription"
-                  segments={data.transcription_segments}
-                  duration={duration}
-                  currentTime={currentTime}
-                  selectedId={
-                    selection?.type === "transcription" ? selection.segment.id : undefined
-                  }
-                  getColor={(_: TranscriptSegment) => "#374151"}
-                  getLabel={(s: TranscriptSegment) =>
-                    s.edited_text ?? s.original_text ?? "—"
-                  }
-                  onSelect={s => setSelection({ type: "transcription", segment: s })}
-                  warningCount={segmentMismatches.transcription}
                 />
               )}
             </VStack>
