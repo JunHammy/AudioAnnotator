@@ -169,43 +169,6 @@ async def create_speaker_segment(
     return new_seg
 
 
-@router.delete("/speaker/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_speaker_segment(
-    segment_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """Delete a speaker segment and its matching transcription segment. Requires speaker assignment."""
-    segment = (await db.execute(
-        select(SpeakerSegment).where(SpeakerSegment.id == segment_id)
-    )).scalar_one_or_none()
-    if not segment:
-        raise HTTPException(status_code=404, detail="Segment not found")
-
-    # Require active speaker assignment for this file
-    assignment = (await db.execute(
-        select(Assignment)
-        .where(Assignment.audio_file_id == segment.audio_file_id)
-        .where(Assignment.annotator_id == current_user.id)
-        .where(Assignment.task_type == "speaker")
-    )).scalar_one_or_none()
-    if not assignment:
-        raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
-
-    # Delete matching transcription segments with the same boundaries
-    trans_result = await db.execute(
-        select(TranscriptionSegment)
-        .where(TranscriptionSegment.audio_file_id == segment.audio_file_id)
-        .where(TranscriptionSegment.start_time == segment.start_time)
-        .where(TranscriptionSegment.end_time == segment.end_time)
-    )
-    for t in trans_result.scalars().all():
-        await db.delete(t)
-
-    await db.delete(segment)
-    await db.flush()
-
-
 @router.delete("/speaker/by-label", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_speaker_by_label(
     file_id: int,
@@ -241,6 +204,41 @@ async def delete_speaker_by_label(
             await db.delete(t)
         await db.delete(seg)
 
+    await db.flush()
+
+
+@router.delete("/speaker/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_speaker_segment(
+    segment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete a speaker segment and its matching transcription segment. Requires speaker assignment."""
+    segment = (await db.execute(
+        select(SpeakerSegment).where(SpeakerSegment.id == segment_id)
+    )).scalar_one_or_none()
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == segment.audio_file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "speaker")
+    )).scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
+
+    trans_result = await db.execute(
+        select(TranscriptionSegment)
+        .where(TranscriptionSegment.audio_file_id == segment.audio_file_id)
+        .where(TranscriptionSegment.start_time == segment.start_time)
+        .where(TranscriptionSegment.end_time == segment.end_time)
+    )
+    for t in trans_result.scalars().all():
+        await db.delete(t)
+
+    await db.delete(segment)
     await db.flush()
 
 

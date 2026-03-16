@@ -15,6 +15,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Dialog,
   Field,
   HStack,
   Heading,
@@ -350,7 +351,13 @@ function SegmentEditor({
   const [isAmbiguous, setIsAmbiguous] = useState<boolean>(
     (selection.segment as Segment).is_ambiguous ?? false
   )
-  const [alignedTo, setAlignedTo] = useState<Segment | null>(null)
+  const [alignedTo, setAlignedTo] = useState<Segment | null>(() => {
+    if (selection.type !== "transcription" || !speakerSegments) return null
+    const seg = selection.segment as TranscriptSegment
+    return speakerSegments.find(
+      s => s.start_time === seg.start_time && s.end_time === seg.end_time
+    ) ?? null
+  })
 
   const { type, segment } = selection
 
@@ -856,6 +863,8 @@ function AnnotateInner() {
   const [addingSegment, setAddingSegment] = useState(false)
   const [addingSpeakerMode, setAddingSpeakerMode] = useState(false)
   const [newSpeakerName, setNewSpeakerName] = useState("")
+  const [segmentModal, setSegmentModal] = useState<{ open: boolean; speaker: string; start: number; end: number }>({ open: false, speaker: "", start: 0, end: 2 })
+  const [trModal, setTrModal] = useState<{ open: boolean; start: number; end: number; originalText: string; alignTo: string }>({ open: false, start: 0, end: 2, originalText: "", alignTo: "" })
   const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set())
   const [hasUpdates, setHasUpdates] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -1116,25 +1125,32 @@ function AnnotateInner() {
     }
   }
 
+  const openSegmentModal = () => {
+    const currentT = playerRef.current?.getCurrentTime() ?? 0
+    const { start, end } = smartPlacement(data?.speaker_segments ?? [], currentT, waveformDuration)
+    setSegmentModal({ open: true, speaker: speakerLabels[0] ?? "", start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)) })
+  }
+
+  const openTrModal = () => {
+    const currentT = playerRef.current?.getCurrentTime() ?? 0
+    const { start, end } = smartPlacement(data?.transcription_segments ?? [], currentT, waveformDuration)
+    setTrModal({ open: true, start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)), originalText: "", alignTo: "" })
+  }
+
   const addSegment = async () => {
     if (!data) return
     setAddingSegment(true)
     try {
-      const currentT = playerRef.current?.getCurrentTime() ?? 0
-      const { start, end } = smartPlacement(data.speaker_segments, currentT, waveformDuration)
-      // Default to speaker_1; pre-fill its known gender if available
-      const defaultLabel = speakerLabels[0] ?? "speaker_1"
-      const defaultGender = getGenderForSpeaker(defaultLabel)
       await api.post("/api/segments/speaker", {
         audio_file_id: data.audio_file.id,
-        start_time: start,
-        end_time: end,
-        speaker_label: defaultLabel,
-        gender: defaultGender,
+        start_time: segmentModal.start,
+        end_time: segmentModal.end,
+        speaker_label: segmentModal.speaker || null,
+        gender: getGenderForSpeaker(segmentModal.speaker),
       })
-      // Reload to get the new segment + matching transcription segment
+      setSegmentModal(m => ({ ...m, open: false }))
       await load()
-      ToastWizard.standard("success", "Segment added at playhead")
+      ToastWizard.standard("success", "Segment added")
     } catch {
       ToastWizard.standard("error", "Failed to add segment")
     } finally {
@@ -1210,16 +1226,19 @@ function AnnotateInner() {
     if (!data) return
     setAddingSegment(true)
     try {
-      const currentT = playerRef.current?.getCurrentTime() ?? 0
-      const { start, end } = smartPlacement(data.transcription_segments, currentT, waveformDuration)
+      // If aligned to a speaker segment, snap times
+      const alignSeg = data.speaker_segments.find(s => String(s.id) === trModal.alignTo)
+      const start = alignSeg ? alignSeg.start_time : trModal.start
+      const end   = alignSeg ? alignSeg.end_time   : trModal.end
       await api.post("/api/segments/transcription", {
         audio_file_id: data.audio_file.id,
         start_time: start,
         end_time: end,
-        original_text: "",
+        original_text: trModal.originalText || "",
       })
+      setTrModal(m => ({ ...m, open: false }))
       await load()
-      ToastWizard.standard("success", "Transcription segment added at playhead")
+      ToastWizard.standard("success", "Transcription segment added")
     } catch {
       ToastWizard.standard("error", "Failed to add transcription segment")
     } finally {
@@ -1250,18 +1269,26 @@ function AnnotateInner() {
     try {
       await api.patch(`/api/assignments/${assignment.id}/status`, { status: "completed" })
       setData(prev =>
-        prev
-          ? {
-              ...prev,
-              assignments: prev.assignments.map(a =>
-                a.id === assignment.id ? { ...a, status: "completed" } : a
-              ),
-            }
-          : prev
+        prev ? { ...prev, assignments: prev.assignments.map(a => a.id === assignment.id ? { ...a, status: "completed" } : a) } : prev
       )
-      ToastWizard.standard("success", `${assignment.task_type} task marked complete`)
+      ToastWizard.standard("success", `${assignment.task_type} marked complete`)
     } catch {
       ToastWizard.standard("error", "Failed to update task status")
+    } finally {
+      setCompleting(c => ({ ...c, [assignment.id]: false }))
+    }
+  }
+
+  const undoComplete = async (assignment: Assignment) => {
+    setCompleting(c => ({ ...c, [assignment.id]: true }))
+    try {
+      await api.patch(`/api/assignments/${assignment.id}/status`, { status: "in_progress" })
+      setData(prev =>
+        prev ? { ...prev, assignments: prev.assignments.map(a => a.id === assignment.id ? { ...a, status: "in_progress" } : a) } : prev
+      )
+      ToastWizard.standard("success", `${assignment.task_type} reopened`)
+    } catch {
+      ToastWizard.standard("error", "Failed to reopen task")
     } finally {
       setCompleting(c => ({ ...c, [assignment.id]: false }))
     }
@@ -1329,181 +1356,132 @@ function AnnotateInner() {
       )}
 
       {/* Header */}
-      <HStack
-        px={4}
-        py={2}
-        borderBottomWidth="1px"
-        borderColor="border"
-        flexShrink={0}
-        flexWrap="wrap"
-        gap={2}
-      >
-        <IconButton
-          aria-label="Back"
-          size="sm"
-          variant="ghost"
-          onClick={() => router.push("/annotator")}
-        >
-          <ArrowLeft size={16} />
-        </IconButton>
-        {hasCollaborativeTasks && (
-          <IconButton
-            aria-label="Refresh segments"
-            size="sm"
-            variant={hasUpdates ? "solid" : "ghost"}
-            colorPalette={hasUpdates ? "orange" : "gray"}
-            onClick={handleRefresh}
-            loading={refreshing}
-            title={hasUpdates ? "Updates available — click to reload" : "Refresh segments"}
-          >
-            <RefreshCw size={14} />
+      <Box px={4} py={2} borderBottomWidth="1px" borderColor="border" flexShrink={0}>
+        {/* Row 1: back + file info + refresh */}
+        <HStack gap={2} mb={1.5}>
+          <IconButton aria-label="Back" size="sm" variant="ghost" onClick={() => router.push("/annotator")}>
+            <ArrowLeft size={16} />
           </IconButton>
-        )}
-        <Box>
-          <Heading size="sm" color="fg">
-            {data.audio_file.filename}
-          </Heading>
-          <HStack gap={2} mt={0.5}>
-            {data.audio_file.language && (
-              <Badge size="sm" colorPalette="blue">{data.audio_file.language}</Badge>
-            )}
-            {duration > 0 && (
-              <Text fontSize="xs" color="fg.muted">{fmtTime(duration)}</Text>
-            )}
-            {data.audio_file.num_speakers && (
-              <Text fontSize="xs" color="fg.muted">
-                {data.audio_file.num_speakers} speaker{data.audio_file.num_speakers !== 1 ? "s" : ""}
-              </Text>
-            )}
-          </HStack>
-        </Box>
-        <HStack ml="auto" gap={2} flexWrap="wrap">
-          {/* Add Speaker — only when annotator has the speaker task */}
+          <Box flex={1} minW={0}>
+            <Heading size="sm" color="fg" truncate>{data.audio_file.filename}</Heading>
+            <HStack gap={2} mt={0.5}>
+              {data.audio_file.language && <Badge size="sm" colorPalette="blue">{data.audio_file.language}</Badge>}
+              {duration > 0 && <Text fontSize="xs" color="fg.muted">{fmtTime(duration)}</Text>}
+              {data.audio_file.num_speakers && (
+                <Text fontSize="xs" color="fg.muted">{data.audio_file.num_speakers} spk</Text>
+              )}
+            </HStack>
+          </Box>
+          {hasCollaborativeTasks && (
+            <IconButton
+              aria-label="Refresh segments"
+              size="sm"
+              variant={hasUpdates ? "solid" : "ghost"}
+              colorPalette={hasUpdates ? "orange" : "gray"}
+              onClick={handleRefresh}
+              loading={refreshing}
+              title={hasUpdates ? "Updates available — click to reload" : "Refresh segments"}
+            >
+              <RefreshCw size={14} />
+            </IconButton>
+          )}
+        </HStack>
+
+        {/* Row 2: action buttons + assignment status pills */}
+        <HStack gap={2} flexWrap="wrap">
+          {/* Add Speaker */}
           {hasTask("speaker") && (
             addingSpeakerMode ? (
               <HStack gap={1}>
                 <Input
-                  size="sm"
-                  placeholder="e.g. speaker_3"
-                  value={newSpeakerName}
+                  size="sm" placeholder="e.g. speaker_3" value={newSpeakerName}
                   onChange={e => setNewSpeakerName(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === "Enter" && newSpeakerName.trim()) addSpeaker(newSpeakerName)
                     if (e.key === "Escape") { setAddingSpeakerMode(false); setNewSpeakerName("") }
                   }}
-                  autoFocus
-                  w="140px"
-                  bg="bg.muted"
-                  borderColor="border"
-                  color="fg"
+                  autoFocus w="130px" bg="bg.muted" borderColor="border" color="fg"
                 />
-                <Button
-                  size="sm"
-                  colorPalette="teal"
-                  disabled={!newSpeakerName.trim()}
-                  loading={addingSegment}
-                  onClick={() => addSpeaker(newSpeakerName)}
-                >
-                  Add
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => { setAddingSpeakerMode(false); setNewSpeakerName("") }}>
-                  ✕
-                </Button>
+                <Button size="sm" colorPalette="teal" disabled={!newSpeakerName.trim()} loading={addingSegment} onClick={() => addSpeaker(newSpeakerName)}>Add</Button>
+                <Button size="sm" variant="ghost" onClick={() => { setAddingSpeakerMode(false); setNewSpeakerName("") }}>✕</Button>
               </HStack>
             ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                colorPalette="teal"
-                onClick={() => setAddingSpeakerMode(true)}
-              >
-                <Plus size={14} />
-                Add Speaker
+              <Button size="sm" variant="outline" colorPalette="teal" onClick={() => setAddingSpeakerMode(true)}>
+                <Plus size={13} /> Speaker
               </Button>
             )
           )}
-          {/* Add Segment — only when annotator has the speaker task */}
+          {/* Add Segment */}
           {hasTask("speaker") && !addingSpeakerMode && (
-            <Button
-              size="sm"
-              variant="outline"
-              colorPalette="teal"
-              loading={addingSegment}
-              onClick={addSegment}
-            >
-              <Plus size={14} />
-              Add Segment
+            <Button size="sm" variant="outline" colorPalette="teal" onClick={openSegmentModal}>
+              <Plus size={13} /> Segment
             </Button>
           )}
-          {/* Add Transcription Segment — only when annotator has the transcription task */}
+          {/* Add Transcription */}
           {hasTask("transcription") && (
-            <Button
-              size="sm"
-              variant="outline"
-              colorPalette="purple"
-              loading={addingSegment}
-              onClick={addTranscriptionSegment}
-            >
-              <Plus size={14} />
-              Add Transcription
+            <Button size="sm" variant="outline" colorPalette="purple" onClick={openTrModal}>
+              <Plus size={13} /> Transcription
             </Button>
           )}
+
+          {/* Spacer */}
+          <Box flex={1} />
+
+          {/* Assignment status pills */}
           {data.assignments.map(a => (
             <HStack key={a.id} gap={1}>
               <Badge
-                colorPalette={
-                  a.status === "completed"
-                    ? "green"
-                    : a.status === "in_progress"
-                    ? "blue"
-                    : "gray"
-                }
+                colorPalette={a.status === "completed" ? "green" : a.status === "in_progress" ? "blue" : "gray"}
                 size="sm"
               >
-                {a.task_type}:{a.status}
+                {a.task_type}
               </Badge>
-              {a.status !== "completed" && (
-                <Button
-                  size="xs"
-                  colorPalette="green"
-                  variant="outline"
-                  loading={completing[a.id]}
-                  onClick={() => markComplete(a)}
-                >
+              {a.status === "completed" ? (
+                <Button size="xs" colorPalette="gray" variant="ghost" loading={completing[a.id]}
+                  title="Undo — reopen this task" onClick={() => undoComplete(a)}>
+                  ↩ Undo
+                </Button>
+              ) : (
+                <Button size="xs" colorPalette="green" variant="outline" loading={completing[a.id]} onClick={() => markComplete(a)}>
                   <CheckCheck size={12} /> Done
                 </Button>
               )}
             </HStack>
           ))}
         </HStack>
-      </HStack>
+      </Box>
 
       {/* Main body */}
       <Box flex={1} display="flex" overflow="hidden">
-        <Box flex={1} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}>
-          {/* Waveform */}
-          <WaveformPlayer
-            ref={playerRef}
-            audioUrl={audioUrl}
-            onTimeUpdate={setCurrentTime}
-            onReady={(dur) => { setWaveformReady(true); setWaveformDuration(dur) }}
-            onRegionUpdate={isSpeakerAnnotator ? handleRegionUpdate : undefined}
-            height={80}
-          />
+        <Box flex={1} display="flex" flexDir="column" overflow="hidden">
+
+          {/* ── Sticky top: waveform + time ruler ── */}
+          <Box px={4} pt={4} pb={2} bg="bg" borderBottomWidth="1px" borderColor="border" flexShrink={0}>
+            <WaveformPlayer
+              ref={playerRef}
+              audioUrl={audioUrl}
+              onTimeUpdate={setCurrentTime}
+              onReady={(dur) => { setWaveformReady(true); setWaveformDuration(dur) }}
+              onRegionUpdate={isSpeakerAnnotator ? handleRegionUpdate : undefined}
+              height={80}
+            />
+            {duration > 0 && (
+              <Box position="relative" h="16px" mt={1}>
+                {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => i * 10).map(t => (
+                  <Box key={t} position="absolute" left={`${(t / duration) * 100}%`} transform="translateX(-50%)">
+                    <Text fontSize="9px" color="fg.muted" userSelect="none">{fmtTime(t)}</Text>
+                  </Box>
+                ))}
+              </Box>
+            )}
+          </Box>
+
+          {/* ── Scrollable bottom: speaker accordions + emotion + remarks ── */}
+          <Box flex={1} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}>
 
           {/* Segment tracks */}
           {data.assignments.length > 0 && (
             <VStack align="stretch" gap={3}>
-              {/* Time ruler */}
-              {duration > 0 && (
-                <Box position="relative" h="16px">
-                  {Array.from({ length: Math.floor(duration / 10) + 1 }, (_, i) => i * 10).map(t => (
-                    <Box key={t} position="absolute" left={`${(t / duration) * 100}%`} transform="translateX(-50%)">
-                      <Text fontSize="9px" color="fg.muted" userSelect="none">{fmtTime(t)}</Text>
-                    </Box>
-                  ))}
-                </Box>
-              )}
 
               {/* Per-speaker accordion sections */}
               {(hasTask("speaker") || hasTask("transcription") || hasTask("gender")) && uniqueSpeakerLanes.map(label => {
@@ -1587,19 +1565,26 @@ function AnnotateInner() {
                           />
                         )}
                         {hasTask("transcription") && (
-                          trSegs.length > 0 ? (
-                            <SegmentTrack
-                              label="Transcription"
-                              segments={trSegs}
-                              duration={duration}
-                              currentTime={currentTime}
-                              selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
-                              getColor={(_: TranscriptSegment) => "#374151"}
-                              getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
-                              onSelect={s => setSelection({ type: "transcription", segment: s })}
-                            />
-                          ) : (
-                            <Text fontSize="xs" color="fg.subtle" fontStyle="italic" py={1}>No transcription segments in this speaker's range.</Text>
+                          trSegs.length > 0 ? (() => {
+                            const spkBounds = new Set(speakerSegs.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`))
+                            const unlinked = trSegs.filter(t => !spkBounds.has(`${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)).length
+                            return (
+                              <SegmentTrack
+                                label="Transcription"
+                                segments={trSegs}
+                                duration={duration}
+                                currentTime={currentTime}
+                                selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
+                                getColor={(_: TranscriptSegment) => "#374151"}
+                                getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
+                                onSelect={s => setSelection({ type: "transcription", segment: s })}
+                                warningCount={unlinked}
+                              />
+                            )
+                          })() : (
+                            <Text fontSize="xs" color="orange.400" fontStyle="italic" py={1}>
+                              ⚠ No transcription segments in this speaker's range.
+                            </Text>
                           )
                         )}
                       </Box>
@@ -1672,7 +1657,8 @@ function AnnotateInner() {
               Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
             </Text>
           </Box>
-        </Box>
+          </Box> {/* end scrollable bottom */}
+        </Box> {/* end flex column */}
 
         {/* Segment editor sidebar — key forces remount on segment change */}
         {selection && (
@@ -1696,6 +1682,165 @@ function AnnotateInner() {
           />
         )}
       </Box>
+
+      {/* ── Add Segment Modal ── */}
+      <Dialog.Root open={segmentModal.open} onOpenChange={({ open }) => setSegmentModal(m => ({ ...m, open }))}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="380px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Add Speaker Segment</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body pt={4}>
+              <VStack gap={4} align="stretch">
+                <Field.Root>
+                  <Field.Label fontSize="xs">Speaker</Field.Label>
+                  <Select.Root
+                    collection={createListCollection({
+                      items: [
+                        ...speakerLabels.map(l => ({ label: l, value: l })),
+                        { label: "— none / new —", value: "" },
+                      ],
+                    })}
+                    size="sm"
+                    value={segmentModal.speaker ? [segmentModal.speaker] : [""]}
+                    onValueChange={({ value }) => setSegmentModal(m => ({ ...m, speaker: value[0] ?? "" }))}
+                  >
+                    <Select.Trigger bg="bg.muted" borderColor="border">
+                      <Select.ValueText placeholder="Select speaker…" />
+                    </Select.Trigger>
+                    <Select.Positioner>
+                      <Select.Content>
+                        {speakerLabels.map(l => (
+                          <Select.Item key={l} item={{ label: l, value: l }}>{l}</Select.Item>
+                        ))}
+                        <Select.Item item={{ label: "— none / new —", value: "" }}>— none / new —</Select.Item>
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Select.Root>
+                </Field.Root>
+                <HStack gap={3}>
+                  <Field.Root>
+                    <Field.Label fontSize="xs">Start (s)</Field.Label>
+                    <Input size="sm" type="number" step={0.001} min={0} bg="bg.muted" borderColor="border" color="fg"
+                      value={segmentModal.start}
+                      onChange={e => setSegmentModal(m => ({ ...m, start: parseFloat(e.target.value) || 0 }))} />
+                  </Field.Root>
+                  <Field.Root>
+                    <Field.Label fontSize="xs">End (s)</Field.Label>
+                    <Input size="sm" type="number" step={0.001} min={0} bg="bg.muted" borderColor="border" color="fg"
+                      value={segmentModal.end}
+                      onChange={e => setSegmentModal(m => ({ ...m, end: parseFloat(e.target.value) || 0 }))} />
+                  </Field.Root>
+                </HStack>
+                {segmentModal.end <= segmentModal.start && (
+                  <Text fontSize="xs" color="red.400">End must be after start.</Text>
+                )}
+              </VStack>
+            </Dialog.Body>
+            <Dialog.Footer borderTopWidth="1px" borderColor="border" pt={3} gap={2}>
+              <Button size="sm" variant="ghost" onClick={() => setSegmentModal(m => ({ ...m, open: false }))}>Cancel</Button>
+              <Button size="sm" colorPalette="teal" loading={addingSegment}
+                disabled={segmentModal.end <= segmentModal.start}
+                onClick={addSegment}>
+                Add Segment
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
+
+      {/* ── Add Transcription Modal ── */}
+      <Dialog.Root open={trModal.open} onOpenChange={({ open }) => setTrModal(m => ({ ...m, open }))}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="420px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Add Transcription Segment</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body pt={4}>
+              <VStack gap={4} align="stretch">
+                {/* Align to speaker segment */}
+                {data && data.speaker_segments.length > 0 && (
+                  <Field.Root>
+                    <Field.Label fontSize="xs">Align to speaker segment <Text as="span" color="fg.subtle">(optional — snaps start/end)</Text></Field.Label>
+                    <Select.Root
+                      collection={createListCollection({
+                        items: [
+                          { label: "— manual times —", value: "" },
+                          ...data.speaker_segments.map(s => ({
+                            label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`,
+                            value: String(s.id),
+                          })),
+                        ],
+                      })}
+                      size="sm"
+                      value={[trModal.alignTo]}
+                      onValueChange={({ value }) => {
+                        const v = value[0] ?? ""
+                        const seg = data.speaker_segments.find(s => String(s.id) === v)
+                        setTrModal(m => ({
+                          ...m,
+                          alignTo: v,
+                          start: seg ? seg.start_time : m.start,
+                          end:   seg ? seg.end_time   : m.end,
+                        }))
+                      }}
+                    >
+                      <Select.Trigger bg="bg.muted" borderColor="border">
+                        <Select.ValueText placeholder="— manual times —" />
+                      </Select.Trigger>
+                      <Select.Positioner>
+                        <Select.Content>
+                          <Select.Item item={{ label: "— manual times —", value: "" }}>— manual times —</Select.Item>
+                          {data.speaker_segments.map(s => (
+                            <Select.Item key={s.id} item={{ label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`, value: String(s.id) }}>
+                              <Box display="inline-block" w="8px" h="8px" rounded="full" bg={speakerColor(s.speaker_label)} mr={2} flexShrink={0} />
+                              {s.speaker_label ?? "?"} ({fmtTime(s.start_time)}–{fmtTime(s.end_time)})
+                            </Select.Item>
+                          ))}
+                        </Select.Content>
+                      </Select.Positioner>
+                    </Select.Root>
+                  </Field.Root>
+                )}
+                <HStack gap={3}>
+                  <Field.Root>
+                    <Field.Label fontSize="xs">Start (s)</Field.Label>
+                    <Input size="sm" type="number" step={0.001} min={0} bg="bg.muted" borderColor="border" color="fg"
+                      value={trModal.start}
+                      onChange={e => setTrModal(m => ({ ...m, start: parseFloat(e.target.value) || 0, alignTo: "" }))} />
+                  </Field.Root>
+                  <Field.Root>
+                    <Field.Label fontSize="xs">End (s)</Field.Label>
+                    <Input size="sm" type="number" step={0.001} min={0} bg="bg.muted" borderColor="border" color="fg"
+                      value={trModal.end}
+                      onChange={e => setTrModal(m => ({ ...m, end: parseFloat(e.target.value) || 0, alignTo: "" }))} />
+                  </Field.Root>
+                </HStack>
+                {trModal.end <= trModal.start && (
+                  <Text fontSize="xs" color="red.400">End must be after start.</Text>
+                )}
+                <Field.Root>
+                  <Field.Label fontSize="xs">Original text <Text as="span" color="fg.subtle">(optional)</Text></Field.Label>
+                  <Textarea size="sm" rows={3} bg="bg.muted" borderColor="border" color="fg" fontFamily="mono" fontSize="xs"
+                    placeholder="Leave blank to fill in later…"
+                    value={trModal.originalText}
+                    onChange={e => setTrModal(m => ({ ...m, originalText: e.target.value }))} />
+                </Field.Root>
+              </VStack>
+            </Dialog.Body>
+            <Dialog.Footer borderTopWidth="1px" borderColor="border" pt={3} gap={2}>
+              <Button size="sm" variant="ghost" onClick={() => setTrModal(m => ({ ...m, open: false }))}>Cancel</Button>
+              <Button size="sm" colorPalette="purple" loading={addingSegment}
+                disabled={trModal.end <= trModal.start}
+                onClick={addTranscriptionSegment}>
+                Add Transcription
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
     </Box>
   )
 }
