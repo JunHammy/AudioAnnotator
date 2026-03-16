@@ -980,26 +980,37 @@ function AnnotateInner() {
     }
   }, [data])
 
-  // Group transcription segments by the speaker with the most overlap
-  const { groupedTranscription, ungroupedTranscription } = useMemo(() => {
-    if (!data) return { groupedTranscription: new Map<string | null, TranscriptSegment[]>(), ungroupedTranscription: [] as TranscriptSegment[] }
+  // Group transcription segments by the speaker with the most overlap.
+  // Fallback: if no overlap, assign to the speaker whose segments are temporally nearest
+  // (this ensures transcriptions "shift up" to the previous speaker when a speaker is deleted).
+  const groupedTranscription = useMemo(() => {
     const grouped = new Map<string | null, TranscriptSegment[]>()
-    const ungrouped: TranscriptSegment[] = []
+    if (!data || data.speaker_segments.length === 0) return grouped
+
     for (const t of data.transcription_segments) {
-      let maxOverlap = 0
+      const tMid = (t.start_time + t.end_time) / 2
       let bestLabel: string | null = null
+      let bestScore = -Infinity
+
       for (const s of data.speaker_segments) {
         const overlap = Math.min(t.end_time, s.end_time) - Math.max(t.start_time, s.start_time)
-        if (overlap > maxOverlap) { maxOverlap = overlap; bestLabel = s.speaker_label }
+        if (overlap > 0) {
+          // Overlap wins — use it as primary signal
+          if (overlap > bestScore) { bestScore = overlap; bestLabel = s.speaker_label }
+        } else if (bestScore <= 0) {
+          // No overlap yet — use negative distance as fallback score
+          const sMid = (s.start_time + s.end_time) / 2
+          const dist = -Math.abs(tMid - sMid)
+          if (dist > bestScore) { bestScore = dist; bestLabel = s.speaker_label }
+        }
       }
-      if (bestLabel !== null && maxOverlap > 0) {
+
+      if (bestLabel !== null) {
         if (!grouped.has(bestLabel)) grouped.set(bestLabel, [])
         grouped.get(bestLabel)!.push(t)
-      } else {
-        ungrouped.push(t)
       }
     }
-    return { groupedTranscription: grouped, ungroupedTranscription: ungrouped }
+    return grouped
   }, [data])
 
   // Open all speaker accordions when file loads
@@ -1165,6 +1176,22 @@ function AnnotateInner() {
       ToastWizard.standard("error", "Failed to save remarks")
     } finally {
       setRemarksSaving(false)
+    }
+  }
+
+  const deleteSpeaker = async (label: string) => {
+    if (!data) return
+    try {
+      await api.delete(`/api/segments/speaker/by-label`, {
+        params: { file_id: data.audio_file.id, speaker_label: label },
+      })
+      if (selection?.type === "speaker" && (selection.segment as Segment).speaker_label === label) {
+        setSelection(null)
+      }
+      await load()
+      ToastWizard.standard("success", `Speaker "${label}" and their segments deleted`)
+    } catch {
+      ToastWizard.standard("error", "Failed to delete speaker")
     }
   }
 
@@ -1519,6 +1546,28 @@ function AnnotateInner() {
                         </HStack>
                       )}
 
+                      {/* Delete speaker button */}
+                      {hasTask("speaker") && (
+                        <Box
+                          as="button"
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (window.confirm(`Delete speaker "${label}" and all their segments?`)) {
+                              deleteSpeaker(label ?? "")
+                            }
+                          }}
+                          p={1}
+                          rounded="sm"
+                          color="fg.subtle"
+                          cursor="pointer"
+                          _hover={{ color: "red.400", bg: "red.900" }}
+                          transition="all 0.1s"
+                          title="Delete this speaker"
+                        >
+                          <Trash2 size={13} />
+                        </Box>
+                      )}
+
                       <Text fontSize="xs" color="fg.muted">{isOpen ? "▲" : "▼"}</Text>
                     </HStack>
 
@@ -1558,23 +1607,6 @@ function AnnotateInner() {
                   </Box>
                 )
               })}
-
-              {/* Unmatched transcription segments (no speaker overlap) */}
-              {hasTask("transcription") && ungroupedTranscription.length > 0 && (
-                <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" p={3}>
-                  <SegmentTrack
-                    label="Transcription (unmatched)"
-                    segments={ungroupedTranscription}
-                    duration={duration}
-                    currentTime={currentTime}
-                    selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
-                    getColor={(_: TranscriptSegment) => "#374151"}
-                    getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
-                    onSelect={s => setSelection({ type: "transcription", segment: s })}
-                    warningCount={segmentMismatches.transcription}
-                  />
-                </Box>
-              )}
 
               {/* Transcription-only task (no speaker sections rendered above) */}
               {hasTask("transcription") && !hasTask("speaker") && !hasTask("gender") && uniqueSpeakerLanes.length === 0 && (

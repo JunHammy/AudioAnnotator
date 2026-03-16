@@ -206,6 +206,44 @@ async def delete_speaker_segment(
     await db.flush()
 
 
+@router.delete("/speaker/by-label", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_speaker_by_label(
+    file_id: int,
+    speaker_label: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete ALL speaker segments for a given label on a file, plus their exact-boundary transcription matches."""
+    assignment = (await db.execute(
+        select(Assignment)
+        .where(Assignment.audio_file_id == file_id)
+        .where(Assignment.annotator_id == current_user.id)
+        .where(Assignment.task_type == "speaker")
+    )).scalar_one_or_none()
+    if not assignment and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
+
+    segments = (await db.execute(
+        select(SpeakerSegment)
+        .where(SpeakerSegment.audio_file_id == file_id)
+        .where(SpeakerSegment.speaker_label == speaker_label)
+    )).scalars().all()
+
+    for seg in segments:
+        # Delete exact-boundary transcription segments
+        trans = (await db.execute(
+            select(TranscriptionSegment)
+            .where(TranscriptionSegment.audio_file_id == file_id)
+            .where(TranscriptionSegment.start_time == seg.start_time)
+            .where(TranscriptionSegment.end_time == seg.end_time)
+        )).scalars().all()
+        for t in trans:
+            await db.delete(t)
+        await db.delete(seg)
+
+    await db.flush()
+
+
 # ─── Transcription Segments ──────────────────────────────────────────────────
 
 @router.get("/transcription/{audio_file_id}", response_model=list[TranscriptionSegmentResponse])
