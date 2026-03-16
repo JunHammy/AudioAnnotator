@@ -7,7 +7,7 @@ from sqlalchemy import func, distinct, select, case
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
-from app.models.models import Assignment, AudioFile, Dataset, SpeakerSegment, User
+from app.models.models import Assignment, AudioFile, AuditLog, Dataset, SpeakerSegment, User
 from app.schemas.schemas import BracketWordsUpdate
 
 # config/bracket_words.json is at repo root (4 levels up from this file)
@@ -45,6 +45,45 @@ async def update_bracket_words(
 
     _BRACKET_WORDS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     return data
+
+
+# ─── Activity Log ────────────────────────────────────────────────────────────
+
+@router.get("/activity")
+async def get_activity_log(
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    rows = (await db.execute(
+        select(
+            AuditLog.id,
+            AuditLog.action,
+            AuditLog.resource_type,
+            AuditLog.resource_id,
+            AuditLog.details,
+            AuditLog.created_at,
+            User.username.label("username"),
+            User.role.label("user_role"),
+        )
+        .outerjoin(User, AuditLog.user_id == User.id)
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+    )).all()
+
+    return [
+        {
+            "id": r.id,
+            "action": r.action,
+            "resource_type": r.resource_type,
+            "resource_id": r.resource_id,
+            "details": r.details,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "username": r.username,
+            "user_role": r.user_role,
+        }
+        for r in rows
+    ]
 
 
 # ─── Dashboard ───────────────────────────────────────────────────────────────

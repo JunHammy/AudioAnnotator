@@ -17,7 +17,7 @@ import {
   Text,
   createListCollection,
 } from "@chakra-ui/react";
-import { ChevronDown, ChevronRight, UserPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Shield, UserPlus } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -285,7 +285,9 @@ export default function ManageAnnotatorsPage() {
   }
 
   const [disabledOpen, setDisabledOpen] = useState(false);
+  const [adminsOpen,   setAdminsOpen]   = useState(false);
 
+  const admins   = users.filter((u) => u.role === "admin");
   const active   = users.filter((u) => u.role === "annotator" &&  u.is_active);
   const disabled = users.filter((u) => u.role === "annotator" && !u.is_active);
 
@@ -293,8 +295,8 @@ export default function ManageAnnotatorsPage() {
     <Box p={8} maxW="1100px">
       <Flex justify="space-between" align="center" mb={6}>
         <Box>
-          <Heading size="lg" color="fg" mb={1}>Manage Annotators</Heading>
-          <Text color="fg.muted">Create and manage annotator accounts</Text>
+          <Heading size="lg" color="fg" mb={1}>Manage Accounts</Heading>
+          <Text color="fg.muted">Create and manage annotator and admin accounts</Text>
         </Box>
         <Button colorPalette="yellow" size="sm" onClick={() => setShowCreate(true)}>
           <UserPlus size={16} />
@@ -399,6 +401,64 @@ export default function ManageAnnotatorsPage() {
                         <Flex gap={2}>
                           <Button size="xs" colorPalette="yellow" variant="outline" onClick={() => setResetTarget(u)}>Reset PW</Button>
                           <Button size="xs" colorPalette="green" variant="outline" onClick={() => toggleActive(u)}>Enable</Button>
+                        </Flex>
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </Table.Root>
+            </Box>
+          </Collapsible.Content>
+        </Collapsible.Root>
+      )}
+
+      {/* Admin accounts — collapsible */}
+      {!loading && admins.length > 0 && (
+        <Collapsible.Root open={adminsOpen} onOpenChange={(d) => setAdminsOpen(d.open)} mt={4}>
+          <Collapsible.Trigger asChild>
+            <Flex
+              align="center" gap={2} px={3} py={2} rounded="md" cursor="pointer"
+              color="fg.muted" fontSize="sm"
+              _hover={{ bg: "bg.subtle", color: "fg" }} transition="all 0.15s" w="fit-content"
+            >
+              {adminsOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <Shield size={14} />
+              <Text fontSize="sm">Admin accounts ({admins.length})</Text>
+            </Flex>
+          </Collapsible.Trigger>
+          <Collapsible.Content>
+            <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mt={2}>
+              <Table.Root size="sm">
+                <Table.Header>
+                  <Table.Row>
+                    {["Username", "Role", "Status", "Created", "Actions"].map((h) => (
+                      <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
+                    ))}
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {admins.map((u) => (
+                    <Table.Row key={u.id} _hover={{ bg: "bg.muted" }}>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="sm" color="fg">{u.username}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Badge colorPalette="purple" size="sm">Admin</Badge>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Badge colorPalette={u.is_active ? "green" : "red"} size="sm">
+                          {u.is_active ? "Active" : "Disabled"}
+                        </Badge>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Text fontSize="xs" color="fg.muted">{new Date(u.created_at).toLocaleDateString()}</Text>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <Flex gap={2}>
+                          <Button size="xs" colorPalette="yellow" variant="outline" onClick={() => setResetTarget(u)}>Reset PW</Button>
+                          <Button size="xs" colorPalette={u.is_active ? "red" : "green"} variant="outline" onClick={() => toggleActive(u)}>
+                            {u.is_active ? "Disable" : "Enable"}
+                          </Button>
                         </Flex>
                       </Table.Cell>
                     </Table.Row>

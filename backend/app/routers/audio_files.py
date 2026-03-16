@@ -19,6 +19,7 @@ from app.models.models import (
     SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
 )
 from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate
+from app.services.audit import write_audit_log
 
 router = APIRouter()
 
@@ -238,6 +239,9 @@ async def upload_audio_file(
 
     await db.flush()
     await db.refresh(db_file)
+    await write_audit_log(db, admin.id, "upload_audio", "audio_file", db_file.id,
+                          {"filename": audio_name, "language": language.strip() or None,
+                           "dataset_id": dataset_id})
     # Reload with json_store eager-loaded so AudioFileResponse.json_types is populated
     result2 = await db.execute(
         select(AudioFile)
@@ -400,6 +404,8 @@ async def delete_audio_file(
     await db.execute(sa_delete(OriginalJSONStore).where(OriginalJSONStore.audio_file_id == file_id))
     await db.execute(sa_delete(FinalAnnotation).where(FinalAnnotation.audio_file_id == file_id))
     await db.execute(sa_delete(AudioFile).where(AudioFile.id == file_id))
+    await write_audit_log(db, admin.id, "delete_audio", "audio_file", file_id,
+                          {"filename": af.filename})
     await db.commit()
 
     # Remove physical file from disk

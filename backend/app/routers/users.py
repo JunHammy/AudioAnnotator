@@ -7,6 +7,7 @@ from app.auth.jwt import hash_password
 from app.database import get_db
 from app.models.models import User
 from app.schemas.schemas import UserCreate, UserResponse, UserUpdate
+from app.services.audit import write_audit_log
 
 router = APIRouter()
 
@@ -38,6 +39,8 @@ async def create_user(
     db.add(user)
     await db.flush()
     await db.refresh(user)
+    await write_audit_log(db, _admin.id, "create_user", "user", user.id,
+                          {"username": user.username, "role": user.role})
     return user
 
 

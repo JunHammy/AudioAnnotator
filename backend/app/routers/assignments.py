@@ -15,6 +15,7 @@ from app.schemas.schemas import (
     AssignmentStatusUpdate,
 )
 from app.services.emotion import auto_finalize_emotions
+from app.services.audit import write_audit_log
 
 router = APIRouter()
 
@@ -53,6 +54,9 @@ async def create_assignment(
     db.add(assignment)
     await db.flush()
     await db.refresh(assignment)
+    await write_audit_log(db, _admin.id, "assign_task", "assignment", assignment.id,
+                          {"audio_file_id": body.audio_file_id, "annotator_id": body.annotator_id,
+                           "task_type": body.task_type})
     return assignment
 
 
@@ -103,6 +107,8 @@ async def create_assignment_batch(
         await db.flush()
         for a in created:
             await db.refresh(a)
+        await write_audit_log(db, _admin.id, "assign_task_batch", "audio_file", body.audio_file_id,
+                              {"annotator_id": body.annotator_id, "task_types": body.task_types})
 
     return created
 
