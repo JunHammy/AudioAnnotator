@@ -18,7 +18,7 @@ from app.models.models import (
     Assignment, AudioFile, Dataset, FinalAnnotation, OriginalJSONStore,
     SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
 )
-from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate
+from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
 from app.services.audit import write_audit_log
 
 router = APIRouter()
@@ -441,6 +441,40 @@ async def set_file_dataset(
         if not ds_check.scalar_one_or_none():
             raise HTTPException(status_code=400, detail=f"Dataset {new_dataset_id} not found.")
     af.dataset_id = new_dataset_id
+    await db.flush()
+    await db.refresh(af)
+    return af
+
+
+@router.patch("/{file_id}/remarks", response_model=AudioFileResponse)
+async def update_remarks(
+    file_id: int,
+    body: AudioFileRemarksUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Any assigned annotator (or admin) can update the file-level remarks."""
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Annotators must be assigned to this file
+    if current_user.role == "annotator":
+        assigned = (await db.execute(
+            select(Assignment).where(
+                Assignment.audio_file_id == file_id,
+                Assignment.annotator_id == current_user.id,
+            )
+        )).scalar_one_or_none()
+        if not assigned:
+            raise HTTPException(status_code=403, detail="Not assigned to this file")
+
+    af.annotator_remarks = body.annotator_remarks
     await db.flush()
     await db.refresh(af)
     return af

@@ -51,6 +51,7 @@ interface AnnotateData {
     num_speakers: number | null
     language: string | null
     emotion_gated: boolean
+    annotator_remarks: string | null
   }
   speaker_segments: Segment[]
   emotion_segments: Segment[]
@@ -850,6 +851,8 @@ function AnnotateInner() {
   const [currentTime, setCurrentTime] = useState(0)
   const [selection, setSelection] = useState<Selection | null>(null)
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
+  const [remarks, setRemarks] = useState("")
+  const [remarksSaving, setRemarksSaving] = useState(false)
   const [addingSegment, setAddingSegment] = useState(false)
   const [addingSpeakerMode, setAddingSpeakerMode] = useState(false)
   const [newSpeakerName, setNewSpeakerName] = useState("")
@@ -862,6 +865,7 @@ function AnnotateInner() {
     try {
       const res = await api.get(`/api/segments/annotate/${fileId}`)
       setData(res.data)
+      setRemarks(res.data.audio_file.annotator_remarks ?? "")
       // Auto-start assignments that are still pending
       for (const a of res.data.assignments) {
         if (a.status === "pending") {
@@ -1148,6 +1152,19 @@ function AnnotateInner() {
       ToastWizard.standard("error", "Failed to add speaker")
     } finally {
       setAddingSegment(false)
+    }
+  }
+
+  const saveRemarks = async () => {
+    if (!data) return
+    setRemarksSaving(true)
+    try {
+      await api.patch(`/api/audio-files/${data.audio_file.id}/remarks`, { annotator_remarks: remarks || null })
+      ToastWizard.standard("success", "Remarks saved")
+    } catch {
+      ToastWizard.standard("error", "Failed to save remarks")
+    } finally {
+      setRemarksSaving(false)
     }
   }
 
@@ -1599,6 +1616,30 @@ function AnnotateInner() {
               </HStack>
             ))}
           </HStack>
+
+          {/* Annotator remarks */}
+          <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" p={3}>
+            <HStack mb={2} justify="space-between" align="center">
+              <Text fontSize="xs" fontWeight="semibold" color="fg">Remarks for admin</Text>
+              <Button size="xs" colorPalette="blue" variant="outline" loading={remarksSaving} onClick={saveRemarks}>
+                <Save size={11} /> Save
+              </Button>
+            </HStack>
+            <Textarea
+              value={remarks}
+              onChange={e => setRemarks(e.target.value)}
+              placeholder="e.g. Language sounds like Mandarin, please update language field. Background noise from 2:30–3:10."
+              rows={4}
+              fontSize="xs"
+              bg="bg.muted"
+              borderColor="border"
+              color="fg"
+              resize="vertical"
+            />
+            <Text fontSize="10px" color="fg.subtle" mt={1}>
+              Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
+            </Text>
+          </Box>
         </Box>
 
         {/* Segment editor sidebar — key forces remount on segment change */}

@@ -42,6 +42,7 @@ interface ReviewFile {
   collaborative_locked_speaker: boolean
   collaborative_locked_gender: boolean
   collaborative_locked_transcription: boolean
+  annotator_remarks: string | null
 }
 
 interface AnnotatorVote {
@@ -645,9 +646,16 @@ export default function ReviewFinalizePage() {
                   _hover={{ bg: "bg.subtle" }}
                   onClick={() => setSelectedFile(f)}
                 >
-                  <Text fontSize="sm" fontWeight="medium" truncate>
-                    {f.filename}
-                  </Text>
+                  <HStack gap={1.5}>
+                    <Text fontSize="sm" fontWeight="medium" truncate flex={1}>
+                      {f.filename}
+                    </Text>
+                    {f.annotator_remarks && (
+                      <Badge size="xs" colorPalette="orange" flexShrink={0} title={f.annotator_remarks}>
+                        ! remark
+                      </Badge>
+                    )}
+                  </HStack>
 
                   <HStack mt={1} gap={2} flexWrap="wrap">
                     <Badge size="sm" colorPalette="blue">
@@ -710,6 +718,13 @@ export default function ReviewFinalizePage() {
                 </HStack>
               </Box>
             </HStack>
+
+            {selectedFile.annotator_remarks && (
+              <Box w="full" bg="orange.900" borderWidth="1px" borderColor="orange.700" rounded="md" px={3} py={2}>
+                <Text fontSize="xs" fontWeight="semibold" color="orange.300" mb={1}>Annotator Remarks</Text>
+                <Text fontSize="sm" color="orange.100" whiteSpace="pre-wrap">{selectedFile.annotator_remarks}</Text>
+              </Box>
+            )}
 
             <Tabs.Root defaultValue="emotion" w="full">
               <Tabs.List>

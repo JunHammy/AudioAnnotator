@@ -175,6 +175,7 @@ class AudioFileResponse(BaseModel):
     collaborative_locked_transcription: bool
     locked_by: Optional[int]
     locked_at: Optional[datetime]
+    annotator_remarks: Optional[str]
     created_at: datetime
     json_types: list[str] = []
     # file_path intentionally omitted — don't expose server filesystem paths to clients
@@ -192,6 +193,10 @@ class AudioFileResponse(BaseModel):
                 obj_dict["json_types"] = []
             return obj_dict
         return data
+
+
+class AudioFileRemarksUpdate(BaseModel):
+    annotator_remarks: Optional[str] = None
 
 
 class AudioFileLockUpdate(BaseModel):
