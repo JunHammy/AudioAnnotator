@@ -615,6 +615,12 @@ export default function ReviewFinalizePage() {
         borderColor="border"
         overflowY="auto"
         p={3}
+        css={{
+          "&::-webkit-scrollbar": { width: "5px" },
+          "&::-webkit-scrollbar-track": { background: "transparent" },
+          "&::-webkit-scrollbar-thumb": { background: "#4a4c54", borderRadius: "999px" },
+          "&::-webkit-scrollbar-thumb:hover": { background: "#5c5f6b" },
+        }}
       >
         <Heading size="sm" mb={3} color="fg.muted">
           Audio Files

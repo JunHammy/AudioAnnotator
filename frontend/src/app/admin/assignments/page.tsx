@@ -223,7 +223,16 @@ export default function AssignTasksPage() {
             <Box px={4} py={3} borderBottomWidth="1px" borderColor="border">
               <Text fontSize="sm" fontWeight="semibold" color="fg">Audio Files ({audioFiles.length})</Text>
             </Box>
-            <Box overflow="auto" h="calc(100% - 48px)">
+            <Box
+              overflow="auto"
+              h="calc(100% - 48px)"
+              css={{
+                "&::-webkit-scrollbar": { width: "5px" },
+                "&::-webkit-scrollbar-track": { background: "transparent" },
+                "&::-webkit-scrollbar-thumb": { background: "#4a4c54", borderRadius: "999px" },
+                "&::-webkit-scrollbar-thumb:hover": { background: "#5c5f6b" },
+              }}
+            >
               {audioFiles.map((af) => {
                 const isSelected = selectedFile?.id === af.id;
                 return (

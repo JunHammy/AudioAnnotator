@@ -13,7 +13,6 @@ import {
   Progress,
   Select,
   Table,
-  Tabs,
   Text,
   Portal,
   createListCollection,
@@ -201,7 +200,6 @@ function parseFolderFiles(files: FileList): FolderAnalysis {
 
   const warnings: string[] = [];
 
-  // Subfolder summary
   const sfMap = new Map<string, SubfolderSummary>();
   for (const f of parsed) {
     if (!sfMap.has(f.subfolder)) sfMap.set(f.subfolder, { name: f.subfolder, type: f.detectedType, isKnown: f.detectedType !== "unknown", count: 0 });
@@ -212,7 +210,6 @@ function parseFolderFiles(files: FileList): FolderAnalysis {
     if (!sf.isKnown) warnings.push(`Subfolder "${sf.name}" is not recognized — its ${sf.count} file(s) will be skipped`);
   }
 
-  // Group by stem
   const groupMap = new Map<string, FolderGroup>();
   for (const f of parsed) {
     if (f.detectedType === "unknown") continue;
@@ -245,7 +242,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   return (
     <Box
       borderWidth="2px" borderStyle="dashed" borderColor={dragging ? "blue.400" : "border"}
-      bg={dragging ? "blue.900" : "bg.muted"} rounded="lg" p={10} textAlign="center"
+      bg={dragging ? "blue.900" : "bg.muted"} rounded="lg" p={8} textAlign="center"
       cursor="pointer" transition="all 0.15s"
       onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
       onDragLeave={() => setDragging(false)}
@@ -254,10 +251,9 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
     >
       <input ref={inputRef} type="file" multiple accept=".wav,.mp3,.json" style={{ display: "none" }}
         onChange={(e) => onFiles([...e.target.files!])} />
-      <Upload size={32} color="var(--chakra-colors-fg-muted)" style={{ margin: "0 auto 12px" }} />
+      <Upload size={28} color="var(--chakra-colors-fg-muted)" style={{ margin: "0 auto 10px" }} />
       <Text color="fg" fontWeight="medium" mb={1}>Drag &amp; drop files here</Text>
-      <Text fontSize="sm" color="fg.muted" mb={3}>or click to browse</Text>
-      <Text fontSize="xs" color="fg.muted">Audio required (.wav/.mp3). Optional: .json for emotion_gender, speaker, transcription</Text>
+      <Text fontSize="sm" color="fg.muted">or click to browse (.wav, .mp3, .json)</Text>
     </Box>
   );
 }
@@ -284,7 +280,7 @@ function LangSelect({ value, onChange, disabled }: { value: string[]; onChange: 
   );
 }
 
-// ── JSON type options ──────────────────────────────────────────────────────
+// ── Constants ──────────────────────────────────────────────────────────────
 
 const JSON_TYPE_OPTIONS = createListCollection({
   items: [
@@ -295,18 +291,25 @@ const JSON_TYPE_OPTIONS = createListCollection({
   ],
 });
 
+const BULK_TYPE_OPTIONS = createListCollection({
+  items: [
+    { label: "Emotion / Gender", value: "emotion_gender" },
+    { label: "Speaker",          value: "speaker" },
+    { label: "Transcription",    value: "transcription" },
+  ],
+});
+
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function UploadFilesPage() {
-  // Files tab
   const [queue,         setQueue]         = useState<QueueItem[]>([]);
   const [language,      setLanguage]      = useState<string[]>(["English"]);
   const [datasetId,     setDatasetId]     = useState<string[]>([]);
   const [uploading,     setUploading]     = useState(false);
   const [existingFiles, setExistingFiles] = useState<ExistingFile[]>([]);
   const [datasets,      setDatasets]      = useState<Dataset[]>([]);
+  const [bulkType,      setBulkType]      = useState<string[]>([]);
 
-  // Folder tab
   const [folderAnalysis,    setFolderAnalysis]    = useState<FolderAnalysis | null>(null);
   const [folderDatasetName, setFolderDatasetName] = useState("");
   const [folderLanguage,    setFolderLanguage]    = useState<string[]>(["English"]);
@@ -322,7 +325,7 @@ export default function UploadFilesPage() {
   const existingMap = new Map<string, ExistingFile>();
   for (const f of existingFiles) existingMap.set(f.filename.replace(/\.[^.]+$/, ""), f);
 
-  // ── Files tab ─────────────────────────────────────────────────────────────
+  // ── Queue helpers ─────────────────────────────────────────────────────────
 
   function addFiles(files: File[]) {
     const newItems: QueueItem[] = files
@@ -424,14 +427,51 @@ export default function UploadFilesPage() {
     return all.some(i => i.status === "error");
   }).length;
 
-  // ── Folder tab ─────────────────────────────────────────────────────────────
+  const unknownItems = queue.filter(i => i.fileType === "unknown");
+
+  // ── Folder handling ───────────────────────────────────────────────────────
 
   function handleFolderSelect(files: FileList | null) {
     if (!files || files.length === 0) return;
-    const analysis = parseFolderFiles(files);
-    setFolderAnalysis(analysis);
-    setFolderDatasetName(analysis.rootFolder);
-    setFolderProgress({ done: 0, total: 0, current: "" });
+    if (folderInputRef.current) folderInputRef.current.value = "";
+
+    const allPaths = Array.from(files)
+      .map(f => (f as any).webkitRelativePath as string ?? "")
+      .filter(Boolean);
+
+    if (allPaths.length === 0) {
+      addFiles(Array.from(files));
+      return;
+    }
+
+    const maxDepth = Math.max(...allPaths.map(p => p.split("/").length));
+
+    if (maxDepth <= 2) {
+      // Single-level folder — auto-detect type from folder name, add to queue
+      const folderName = allPaths[0].split("/")[0].toLowerCase();
+      const detectedType: FileType = SUBFOLDER_TYPE_MAP[folderName] ?? "unknown";
+      const validFiles = Array.from(files).filter(f =>
+        ["wav", "mp3", "json"].includes(f.name.split(".").pop()?.toLowerCase() ?? "")
+      );
+      const newItems: QueueItem[] = validFiles.map(f => ({
+        id: crypto.randomUUID(),
+        file: f,
+        fileType: detectedType !== "unknown" ? detectedType : detectFileType(f.name).type,
+        status: "ready" as UploadStatus,
+      }));
+      setQueue(prev => [...prev, ...newItems]);
+      if (detectedType !== "unknown") {
+        ToastWizard.standard("info", `Folder "${folderName}" → ${typeLabel(detectedType)}`, `${newItems.length} files added to queue`, 3000, true);
+      } else if (newItems.length > 0) {
+        ToastWizard.standard("warning", `Unknown folder type`, `${newItems.length} files added — set their type in the queue`, 4000, true);
+      }
+    } else {
+      // Multi-level — dataset folder mode
+      const analysis = parseFolderFiles(files);
+      setFolderAnalysis(analysis);
+      setFolderDatasetName(analysis.rootFolder);
+      setFolderProgress({ done: 0, total: 0, current: "" });
+    }
   }
 
   async function uploadFolderDataset() {
@@ -499,321 +539,374 @@ export default function UploadFilesPage() {
     <Box p={8} maxW="1100px">
       <Heading size="lg" color="fg" mb={1}>Upload Files</Heading>
       <Text color="fg.muted" mb={6}>
-        Upload individual files, or switch to <Text as="span" color="fg">Dataset Folder</Text> to bulk-upload a structured folder in one go.
+        Add individual files or select a folder.{" "}
+        Single-type folders (e.g.{" "}
+        <Text as="span" fontFamily="mono" color="fg">emotion_gender/</Text>) auto-tag all files inside.{" "}
+        Dataset folders with subfolders open the bulk upload panel below.
       </Text>
 
-      <Tabs.Root defaultValue="files">
-        <Tabs.List mb={6}>
-          <Tabs.Trigger value="files"><Upload size={13} style={{ marginRight: 6 }} />Individual Files</Tabs.Trigger>
-          <Tabs.Trigger value="folder"><FolderOpen size={13} style={{ marginRight: 6 }} />Dataset Folder</Tabs.Trigger>
-        </Tabs.List>
+      {/* Hidden folder input */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        // @ts-ignore
+        webkitdirectory=""
+        style={{ display: "none" }}
+        onChange={e => handleFolderSelect(e.target.files)}
+      />
 
-        {/* ── Individual Files ───────────────────────────────────────────── */}
-        <Tabs.Content value="files">
-          <Grid templateColumns="1fr 280px" gap={6} mb={6}>
-            <DropZone onFiles={addFiles} />
+      {/* ── Top section: drop zone + settings ──────────────────────────── */}
+      <Grid templateColumns="1fr 280px" gap={6} mb={5}>
+        <Box>
+          <DropZone onFiles={addFiles} />
+          <Flex align="center" gap={2} mt={2} justify="center">
+            <Text fontSize="xs" color="fg.muted">or</Text>
+            <Button
+              size="xs" variant="ghost" color="blue.400"
+              onClick={() => folderInputRef.current?.click()}
+            >
+              <FolderOpen size={12} />
+              Select Folder
+            </Button>
+            <Text fontSize="xs" color="fg.muted">
+              (auto-tags by name, or opens bulk panel)
+            </Text>
+          </Flex>
+        </Box>
 
-            <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
-              <Text fontSize="sm" fontWeight="semibold" color="fg" mb={4}>Upload Settings</Text>
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
+          <Text fontSize="sm" fontWeight="semibold" color="fg" mb={4}>Upload Settings</Text>
 
+          <Field.Root mb={4}>
+            <Field.Label color="fg" fontSize="sm">Language</Field.Label>
+            <LangSelect value={language} onChange={setLanguage} />
+          </Field.Root>
+
+          {datasets.length > 0 && (() => {
+            const opts = createListCollection({ items: [{ label: "No dataset", value: "" }, ...datasets.map(d => ({ label: d.name, value: String(d.id) }))] });
+            return (
               <Field.Root mb={4}>
-                <Field.Label color="fg" fontSize="sm">Language</Field.Label>
-                <LangSelect value={language} onChange={setLanguage} />
+                <Field.Label color="fg" fontSize="sm">Dataset</Field.Label>
+                <Select.Root collection={opts} value={datasetId} onValueChange={(d) => setDatasetId(d.value)} size="sm">
+                  <Select.HiddenSelect />
+                  <Select.Control>
+                    <Select.Trigger bg="bg.muted" borderColor="border" color={datasetId[0] ? "fg" : "fg.muted"}>
+                      <Select.ValueText placeholder="None" />
+                    </Select.Trigger>
+                  </Select.Control>
+                  <Portal>
+                    <Select.Positioner>
+                      <Select.Content bg="bg.subtle" borderColor="border">
+                        {opts.items.map(item => (
+                          <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>{item.label}</Select.Item>
+                        ))}
+                      </Select.Content>
+                    </Select.Positioner>
+                  </Portal>
+                </Select.Root>
               </Field.Root>
+            );
+          })()}
 
-              {datasets.length > 0 && (() => {
-                const opts = createListCollection({ items: [{ label: "No dataset", value: "" }, ...datasets.map(d => ({ label: d.name, value: String(d.id) }))] });
-                return (
-                  <Field.Root mb={4}>
-                    <Field.Label color="fg" fontSize="sm">Dataset</Field.Label>
-                    <Select.Root collection={opts} value={datasetId} onValueChange={(d) => setDatasetId(d.value)} size="sm">
-                      <Select.HiddenSelect />
-                      <Select.Control>
-                        <Select.Trigger bg="bg.muted" borderColor="border" color={datasetId[0] ? "fg" : "fg.muted"}>
-                          <Select.ValueText placeholder="None" />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Portal>
-                        <Select.Positioner>
-                          <Select.Content bg="bg.subtle" borderColor="border">
-                            {opts.items.map(item => (
-                              <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>{item.label}</Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Portal>
-                    </Select.Root>
-                  </Field.Root>
-                );
-              })()}
-
-              <Box bg="bg.muted" rounded="md" p={3} mb={4} fontSize="xs" color="fg.muted">
-                <Text mb={1}><Text as="span" color="fg">{readyCount - linkCount}</Text> new uploads</Text>
-                {linkCount  > 0 && <Text mb={1}><Text as="span" color="blue.400">{linkCount}</Text> JSON links to existing</Text>}
-                {doneCount    > 0 && <Text mb={1}><Text as="span" color="green.400">{doneCount - skippedCount}</Text> done</Text>}
-                {skippedCount > 0 && <Text mb={1}><Text as="span" color="orange.400">{skippedCount}</Text> already existed (skipped)</Text>}
-                {errorCount   > 0 && <Text><Text as="span" color="red.400">{errorCount}</Text> failed</Text>}
-              </Box>
-
-              <Flex direction="column" gap={2}>
-                <Button colorPalette="blue" size="sm" w="full" loading={uploading} disabled={readyCount === 0} onClick={uploadAll}>
-                  <Upload size={14} /> Upload All ({readyCount})
-                </Button>
-                {queue.length > 0 && <Button variant="outline" size="sm" w="full" onClick={() => setQueue([])}>Clear Queue</Button>}
-                {doneCount  > 0 && <Button variant="ghost" size="sm" w="full" color="fg.muted" onClick={clearDone}>Clear Completed</Button>}
-              </Flex>
-            </Box>
-          </Grid>
-
-          <Box bg="yellow.900" borderWidth="1px" borderColor="yellow.700" rounded="md" px={4} py={3} mb={5} fontSize="xs" color="yellow.200">
-            <Text fontWeight="semibold" mb={1}>What happens on upload:</Text>
-            <Text>• Audio-only upload is valid — annotators create segments manually</Text>
-            <Text>• speaker_0 → speaker_1 (labels shifted +1) when speaker JSON provided</Text>
-            <Text>• Segments seeded from JSON; original JSONs stored as immutable reference</Text>
+          <Box bg="bg.muted" rounded="md" p={3} mb={4} fontSize="xs" color="fg.muted">
+            <Text mb={1}><Text as="span" color="fg">{readyCount - linkCount}</Text> new uploads</Text>
+            {linkCount    > 0 && <Text mb={1}><Text as="span" color="blue.400">{linkCount}</Text> JSON links to existing</Text>}
+            {doneCount    > 0 && <Text mb={1}><Text as="span" color="green.400">{doneCount - skippedCount}</Text> done</Text>}
+            {skippedCount > 0 && <Text mb={1}><Text as="span" color="orange.400">{skippedCount}</Text> already existed (skipped)</Text>}
+            {errorCount   > 0 && <Text><Text as="span" color="red.400">{errorCount}</Text> failed</Text>}
           </Box>
 
-          {queue.length > 0 && (
-            <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
-              <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
-                <Text fontSize="sm" fontWeight="semibold" color="fg">Upload Queue — {queue.length} files</Text>
-              </Box>
-              <Table.Root size="sm">
-                <Table.Header>
-                  <Table.Row>
-                    {["Filename", "Type", "Size", "Status", ""].map(h => (
-                      <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
-                    ))}
+          <Flex direction="column" gap={2}>
+            <Button colorPalette="blue" size="sm" w="full" loading={uploading} disabled={readyCount === 0} onClick={uploadAll}>
+              <Upload size={14} /> Upload All ({readyCount})
+            </Button>
+            {queue.length > 0 && <Button variant="outline" size="sm" w="full" onClick={() => setQueue([])}>Clear Queue</Button>}
+            {doneCount  > 0 && <Button variant="ghost" size="sm" w="full" color="fg.muted" onClick={clearDone}>Clear Completed</Button>}
+          </Flex>
+        </Box>
+      </Grid>
+
+      {/* ── Hint box ───────────────────────────────────────────────────── */}
+      <Box bg="yellow.900" borderWidth="1px" borderColor="yellow.700" rounded="md" px={4} py={3} mb={5} fontSize="xs" color="yellow.200">
+        <Text fontWeight="semibold" mb={1}>Upload tips:</Text>
+        <Text>• Audio-only upload is valid — annotators create segments manually</Text>
+        <Text>• Selecting a folder named <Text as="span" fontFamily="mono">emotion_gender</Text>, <Text as="span" fontFamily="mono">speaker</Text>, <Text as="span" fontFamily="mono">audio</Text>, etc. auto-tags all files inside</Text>
+        <Text>• Selecting a dataset root folder (with subfolders) opens the bulk upload panel below</Text>
+        <Text>• speaker_0 → speaker_1 (labels shifted +1) when speaker JSON provided</Text>
+      </Box>
+
+      {/* ── Bulk type assignment bar ────────────────────────────────────── */}
+      {unknownItems.length > 0 && (
+        <Flex
+          align="center" gap={3} px={4} py={3}
+          bg="orange.900" borderWidth="1px" borderColor="orange.700"
+          rounded="md" mb={4} flexWrap="wrap"
+        >
+          <AlertTriangle size={14} color="var(--chakra-colors-orange-400)" />
+          <Text fontSize="sm" color="orange.200" flex="1">
+            {unknownItems.length} file{unknownItems.length > 1 ? "s" : ""} need a type — assign individually below or bulk-set here
+          </Text>
+          <Select.Root
+            collection={BULK_TYPE_OPTIONS}
+            value={bulkType}
+            onValueChange={d => setBulkType(d.value)}
+            size="sm"
+          >
+            <Select.HiddenSelect />
+            <Select.Control>
+              <Select.Trigger bg="bg.muted" borderColor="border" color="fg" minW="160px">
+                <Select.ValueText placeholder="Set all to…" />
+              </Select.Trigger>
+            </Select.Control>
+            <Portal>
+              <Select.Positioner>
+                <Select.Content bg="bg.subtle" borderColor="border">
+                  {BULK_TYPE_OPTIONS.items.map(item => (
+                    <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>{item.label}</Select.Item>
+                  ))}
+                </Select.Content>
+              </Select.Positioner>
+            </Portal>
+          </Select.Root>
+          <Button
+            size="sm" colorPalette="orange" variant="outline"
+            disabled={!bulkType[0]}
+            onClick={() => {
+              if (!bulkType[0]) return;
+              setQueue(prev => prev.map(i => i.fileType === "unknown" ? { ...i, fileType: bulkType[0] as FileType } : i));
+              setBulkType([]);
+            }}
+          >
+            Apply to all
+          </Button>
+        </Flex>
+      )}
+
+      {/* ── Queue table ────────────────────────────────────────────────── */}
+      {queue.length > 0 && (
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mb={6}>
+          <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
+            <Text fontSize="sm" fontWeight="semibold" color="fg">Upload Queue — {queue.length} files</Text>
+          </Box>
+          <Table.Root size="sm">
+            <Table.Header>
+              <Table.Row>
+                {["Filename", "Type", "Size", "Status", ""].map(h => (
+                  <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
+                ))}
+              </Table.Row>
+            </Table.Header>
+            <Table.Body>
+              {queue.map(item => {
+                const isJson = item.file.name.toLowerCase().endsWith(".json");
+                return (
+                  <Table.Row key={item.id} _hover={{ bg: "bg.muted" }}>
+                    <Table.Cell px={4} py={2}>
+                      <Text fontSize="sm" color="fg" fontFamily="mono">{item.file.name}</Text>
+                      {item.error && <Text fontSize="xs" color="red.400" mt={0.5}>{item.error}</Text>}
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      {isJson ? (
+                        <Select.Root collection={JSON_TYPE_OPTIONS} value={[item.fileType]} onValueChange={d => updateItemType(item.id, d.value[0] as FileType)} size="xs">
+                          <Select.HiddenSelect />
+                          <Select.Control>
+                            <Select.Trigger bg="bg.muted" borderColor={item.fileType === "unknown" ? "red.500" : "border"} color={item.fileType === "unknown" ? "red.400" : "fg"} minW="140px">
+                              <Select.ValueText placeholder="Tag type…" />
+                            </Select.Trigger>
+                          </Select.Control>
+                          <Portal>
+                            <Select.Positioner>
+                              <Select.Content bg="bg.subtle" borderColor="border">
+                                {JSON_TYPE_OPTIONS.items.map(opt => (
+                                  <Select.Item key={opt.value} item={opt} color="fg" _hover={{ bg: "bg.muted" }}>{opt.label}</Select.Item>
+                                ))}
+                              </Select.Content>
+                            </Select.Positioner>
+                          </Portal>
+                        </Select.Root>
+                      ) : (
+                        <Badge colorPalette={typeColor(item.fileType)} size="sm">{typeLabel(item.fileType)}</Badge>
+                      )}
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}><Text fontSize="xs" color="fg.muted">{formatBytes(item.file.size)}</Text></Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      <Flex align="center" gap={1.5}>
+                        {statusIcon(item.status)}
+                        <Badge colorPalette={
+                          item.status === "done"        ? "green"
+                          : item.status === "skipped"   ? "orange"
+                          : item.status === "error"     ? "red"
+                          : item.status === "uploading" ? "blue"
+                          : "gray"
+                        } size="sm">
+                          {item.status === "skipped" ? "exists" : item.status}
+                        </Badge>
+                      </Flex>
+                    </Table.Cell>
+                    <Table.Cell px={4} py={2}>
+                      {item.status !== "uploading" && (
+                        <Button size="xs" variant="ghost" color="fg.muted" p={0} minW="auto" onClick={() => removeItem(item.id)} title="Remove">
+                          <X size={14} />
+                        </Button>
+                      )}
+                    </Table.Cell>
                   </Table.Row>
-                </Table.Header>
-                <Table.Body>
-                  {queue.map(item => {
-                    const isJson = item.file.name.toLowerCase().endsWith(".json");
-                    return (
-                      <Table.Row key={item.id} _hover={{ bg: "bg.muted" }}>
-                        <Table.Cell px={4} py={2}>
-                          <Text fontSize="sm" color="fg" fontFamily="mono">{item.file.name}</Text>
-                          {item.error && <Text fontSize="xs" color="red.400" mt={0.5}>{item.error}</Text>}
-                        </Table.Cell>
-                        <Table.Cell px={4} py={2}>
-                          {isJson ? (
-                            <Select.Root collection={JSON_TYPE_OPTIONS} value={[item.fileType]} onValueChange={d => updateItemType(item.id, d.value[0] as FileType)} size="xs">
-                              <Select.HiddenSelect />
-                              <Select.Control>
-                                <Select.Trigger bg="bg.muted" borderColor={item.fileType === "unknown" ? "red.500" : "border"} color={item.fileType === "unknown" ? "red.400" : "fg"} minW="140px">
-                                  <Select.ValueText placeholder="Tag type…" />
-                                </Select.Trigger>
-                              </Select.Control>
-                              <Portal>
-                                <Select.Positioner>
-                                  <Select.Content bg="bg.subtle" borderColor="border">
-                                    {JSON_TYPE_OPTIONS.items.map(opt => (
-                                      <Select.Item key={opt.value} item={opt} color="fg" _hover={{ bg: "bg.muted" }}>{opt.label}</Select.Item>
-                                    ))}
-                                  </Select.Content>
-                                </Select.Positioner>
-                              </Portal>
-                            </Select.Root>
-                          ) : (
-                            <Badge colorPalette={typeColor(item.fileType)} size="sm">{typeLabel(item.fileType)}</Badge>
-                          )}
-                        </Table.Cell>
-                        <Table.Cell px={4} py={2}><Text fontSize="xs" color="fg.muted">{formatBytes(item.file.size)}</Text></Table.Cell>
-                        <Table.Cell px={4} py={2}>
-                          <Flex align="center" gap={1.5}>
-                            {statusIcon(item.status)}
-                            <Badge colorPalette={
-                              item.status === "done"      ? "green"
-                              : item.status === "skipped" ? "orange"
-                              : item.status === "error"   ? "red"
-                              : item.status === "uploading" ? "blue"
-                              : "gray"
-                            } size="sm">
-                              {item.status === "skipped" ? "exists" : item.status}
-                            </Badge>
-                          </Flex>
-                        </Table.Cell>
-                        <Table.Cell px={4} py={2}>
-                          {item.status !== "uploading" && (
-                            <Button size="xs" variant="ghost" color="fg.muted" p={0} minW="auto" onClick={() => removeItem(item.id)} title="Remove">
-                              <X size={14} />
-                            </Button>
-                          )}
-                        </Table.Cell>
-                      </Table.Row>
-                    );
-                  })}
-                </Table.Body>
-              </Table.Root>
+                );
+              })}
+            </Table.Body>
+          </Table.Root>
 
-              {groups.some(g => !g.audio) && (
-                <Box px={5} py={3} borderTopWidth="1px" borderColor="border">
-                  {groups.filter(g => !g.audio && g.existingFileId).map(g => (
-                    <Text key={g.stem} fontSize="xs" color="blue.300" mb={0.5}>
-                      ↗ {g.stem}: will link to <Text as="span" fontFamily="mono">{g.existingFilename}</Text>
-                      {existingFiles.find(f => f.id === g.existingFileId)?.json_types?.length
-                        ? <Text as="span" color="fg.muted"> (has: {existingFiles.find(f => f.id === g.existingFileId)?.json_types.join(", ")})</Text>
-                        : null}
-                    </Text>
-                  ))}
-                  {groups.filter(g => !g.audio && !g.existingFileId).length > 0 && (
-                    <>
-                      <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1} mt={groups.some(g => !g.audio && g.existingFileId) ? 2 : 0}>
-                        No matching audio found (will not upload):
-                      </Text>
-                      {groups.filter(g => !g.audio && !g.existingFileId).map(g => (
-                        <Text key={g.stem} fontSize="xs" color="fg.muted">{g.stem}: add the .wav/.mp3 or upload audio first</Text>
-                      ))}
-                    </>
-                  )}
-                </Box>
-              )}
-            </Box>
-          )}
-        </Tabs.Content>
-
-        {/* ── Dataset Folder ─────────────────────────────────────────────── */}
-        <Tabs.Content value="folder">
-          {/* Hidden folder input */}
-          <input
-            ref={folderInputRef}
-            type="file"
-            // @ts-ignore
-            webkitdirectory=""
-            style={{ display: "none" }}
-            onChange={e => handleFolderSelect(e.target.files)}
-          />
-
-          {!folderAnalysis ? (
-            <>
-              <Box
-                borderWidth="2px" borderStyle="dashed" borderColor="border" bg="bg.muted"
-                rounded="lg" p={12} textAlign="center" cursor="pointer" transition="all 0.15s"
-                _hover={{ borderColor: "blue.400", bg: "blue.900" }}
-                onClick={() => folderInputRef.current?.click()}
-              >
-                <FolderOpen size={36} color="var(--chakra-colors-fg-muted)" style={{ margin: "0 auto 12px" }} />
-                <Text color="fg" fontWeight="medium" mb={1}>Select a dataset folder</Text>
-                <Text fontSize="sm" color="fg.muted" mb={4}>Click to browse — select the root folder of your dataset</Text>
-                <Box bg="bg.subtle" rounded="md" px={5} py={3} display="inline-block" textAlign="left">
-                  <Text fontSize="xs" color="fg.muted" fontFamily="mono" lineHeight="tall">
-                    testSet1/<br />
-                    &nbsp;&nbsp;audio/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← .wav / .mp3<br />
-                    &nbsp;&nbsp;emotion_gender/ ← .json<br />
-                    &nbsp;&nbsp;speaker/ &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;← .json<br />
-                    &nbsp;&nbsp;transcription/ &nbsp;← .json
-                  </Text>
-                </Box>
-              </Box>
-
-              <Box bg="yellow.900" borderWidth="1px" borderColor="yellow.700" rounded="md" px={4} py={3} mt={4} fontSize="xs" color="yellow.200">
-                <Text fontWeight="semibold" mb={1}>How it works:</Text>
-                <Text>• Root folder name becomes the dataset name (auto-created if it doesn't exist)</Text>
-                <Text>• Valid subfolder names: <Text as="span" fontFamily="mono">audio</Text>, <Text as="span" fontFamily="mono">emotion_gender</Text> (or <Text as="span" fontFamily="mono">emotion</Text>), <Text as="span" fontFamily="mono">speaker</Text>, <Text as="span" fontFamily="mono">transcription</Text></Text>
-                <Text>• Files grouped by stem (same base name across subfolders) — groups without audio are skipped</Text>
-              </Box>
-            </>
-          ) : (
-            <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
-              <Flex justify="space-between" align="center" mb={5}>
-                <Text fontWeight="semibold" color="fg">Folder Analysis</Text>
-                <Button size="xs" variant="ghost" color="fg.muted" disabled={folderUploading}
-                  onClick={() => { setFolderAnalysis(null); if (folderInputRef.current) folderInputRef.current.value = ""; }}>
-                  <X size={12} /> Change folder
-                </Button>
-              </Flex>
-
-              <Grid templateColumns="1fr 1fr" gap={4} mb={5}>
-                <Field.Root>
-                  <Field.Label color="fg" fontSize="sm">Dataset Name</Field.Label>
-                  <Input size="sm" value={folderDatasetName} onChange={e => setFolderDatasetName(e.target.value)}
-                    bg="bg.muted" borderColor="border" disabled={folderUploading} />
-                  <Field.HelperText fontSize="xs" color={folderDatasetName.trim() ? (folderDatasetExists ? "blue.400" : "green.400") : "fg.muted"}>
-                    {folderDatasetName.trim()
-                      ? (folderDatasetExists ? "Existing dataset — files will be added" : "New dataset will be created")
-                      : "Required"}
-                  </Field.HelperText>
-                </Field.Root>
-                <Field.Root>
-                  <Field.Label color="fg" fontSize="sm">Language</Field.Label>
-                  <LangSelect value={folderLanguage} onChange={setFolderLanguage} disabled={folderUploading} />
-                </Field.Root>
-              </Grid>
-
-              {/* Subfolder breakdown */}
-              <Text fontSize="xs" color="fg.muted" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide" mb={2}>
-                Detected Subfolders
-              </Text>
-              <Box bg="bg.muted" rounded="md" p={3} mb={4}>
-                {folderAnalysis.subfolders.length === 0 ? (
-                  <Text fontSize="sm" color="fg.muted">No valid subfolders detected.</Text>
-                ) : (
-                  folderAnalysis.subfolders.map(sf => (
-                    <Flex key={sf.name} align="center" gap={3} mb={1}>
-                      {sf.isKnown
-                        ? <CheckCircle size={13} color="var(--chakra-colors-green-400)" />
-                        : <AlertCircle size={13} color="var(--chakra-colors-red-400)" />}
-                      <Text fontSize="sm" fontFamily="mono" color={sf.isKnown ? "fg" : "fg.muted"} minW="160px">{sf.name}/</Text>
-                      <Text fontSize="xs" color="fg.muted">→</Text>
-                      <Badge colorPalette={sf.isKnown ? typeColor(sf.type) : "red"} size="sm">
-                        {sf.isKnown ? typeLabel(sf.type) : "Skipped"}
-                      </Badge>
-                      <Text fontSize="xs" color="fg.muted">{sf.count} files</Text>
-                    </Flex>
-                  ))
-                )}
-              </Box>
-
-              {/* Warnings */}
-              {folderAnalysis.warnings.length > 0 && (
-                <Box mb={4}>
-                  {folderAnalysis.warnings.map((w, i) => (
-                    <Flex key={i} align="flex-start" gap={2} mb={1}>
-                      <AlertTriangle size={12} color="var(--chakra-colors-yellow-400)" style={{ marginTop: 2, flexShrink: 0 }} />
-                      <Text fontSize="xs" color="yellow.300">{w}</Text>
-                    </Flex>
-                  ))}
-                </Box>
-              )}
-
-              {/* Summary */}
-              <Box bg="bg.muted" rounded="md" p={3} mb={4}>
-                <Text fontSize="sm" color="fg">
-                  <Text as="span" fontWeight="bold" color="blue.400">{folderAnalysis.uploadableGroups.length}</Text>
-                  {" "}file group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""} ready to upload
-                  {folderAnalysis.skippedCount > 0 && (
-                    <Text as="span" color="fg.muted"> · {folderAnalysis.skippedCount} skipped (no audio)</Text>
-                  )}
+          {groups.some(g => !g.audio) && (
+            <Box px={5} py={3} borderTopWidth="1px" borderColor="border">
+              {groups.filter(g => !g.audio && g.existingFileId).map(g => (
+                <Text key={g.stem} fontSize="xs" color="blue.300" mb={0.5}>
+                  ↗ {g.stem}: will link to <Text as="span" fontFamily="mono">{g.existingFilename}</Text>
+                  {existingFiles.find(f => f.id === g.existingFileId)?.json_types?.length
+                    ? <Text as="span" color="fg.muted"> (has: {existingFiles.find(f => f.id === g.existingFileId)?.json_types.join(", ")})</Text>
+                    : null}
                 </Text>
-              </Box>
-
-              {/* Progress bar */}
-              {(folderUploading || folderDone) && (
-                <Box mb={4}>
-                  <Flex justify="space-between" mb={1}>
-                    <Text fontSize="xs" color="fg.muted">
-                      {folderUploading ? `Uploading: ${folderProgress.current}` : "Upload complete"}
-                    </Text>
-                    <Text fontSize="xs" color="fg.muted">{folderProgress.done}/{folderProgress.total}</Text>
-                  </Flex>
-                  <Progress.Root value={folderProgressPct} size="sm" colorPalette={folderDone ? "green" : "blue"}>
-                    <Progress.Track rounded="full"><Progress.Range /></Progress.Track>
-                  </Progress.Root>
-                </Box>
+              ))}
+              {groups.filter(g => !g.audio && !g.existingFileId).length > 0 && (
+                <>
+                  <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1} mt={groups.some(g => !g.audio && g.existingFileId) ? 2 : 0}>
+                    No matching audio found (will not upload):
+                  </Text>
+                  {groups.filter(g => !g.audio && !g.existingFileId).map(g => (
+                    <Text key={g.stem} fontSize="xs" color="fg.muted">{g.stem}: add the .wav/.mp3 or upload audio first</Text>
+                  ))}
+                </>
               )}
-
-              <Button
-                colorPalette="blue" size="sm"
-                loading={folderUploading}
-                disabled={folderAnalysis.uploadableGroups.length === 0 || !folderDatasetName.trim() || folderUploading}
-                onClick={uploadFolderDataset}
-              >
-                <Upload size={14} />
-                Upload {folderAnalysis.uploadableGroups.length} Group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""}
-              </Button>
             </Box>
           )}
-        </Tabs.Content>
-      </Tabs.Root>
+        </Box>
+      )}
+
+      {/* ── Dataset folder bulk upload ──────────────────────────────────── */}
+      <Box>
+        {queue.length > 0 && <Box borderTopWidth="1px" borderColor="border" mb={6} />}
+
+        {!folderAnalysis ? (
+          <Flex
+            align="center" gap={4} p={4}
+            bg="bg.subtle" rounded="lg" borderWidth="1px" borderColor="border"
+            cursor="pointer" transition="border-color 0.15s"
+            _hover={{ borderColor: "blue.500" }}
+            onClick={() => folderInputRef.current?.click()}
+          >
+            <FolderOpen size={22} color="var(--chakra-colors-fg-muted)" style={{ flexShrink: 0 }} />
+            <Box flex={1}>
+              <Text fontSize="sm" fontWeight="semibold" color="fg">Bulk Dataset Upload</Text>
+              <Text fontSize="xs" color="fg.muted">
+                Select a root dataset folder containing{" "}
+                <Text as="span" fontFamily="mono">audio/</Text>,{" "}
+                <Text as="span" fontFamily="mono">emotion_gender/</Text>, etc. to analyse and bulk-upload
+              </Text>
+            </Box>
+            <Button size="sm" colorPalette="blue" variant="outline" pointerEvents="none" flexShrink={0}>
+              Select Folder
+            </Button>
+          </Flex>
+        ) : (
+          <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
+            <Flex justify="space-between" align="center" mb={5}>
+              <Text fontWeight="semibold" color="fg">Dataset Folder — {folderAnalysis.rootFolder}</Text>
+              <Button size="xs" variant="ghost" color="fg.muted" disabled={folderUploading}
+                onClick={() => { setFolderAnalysis(null); if (folderInputRef.current) folderInputRef.current.value = ""; }}>
+                <X size={12} /> Change folder
+              </Button>
+            </Flex>
+
+            <Grid templateColumns="1fr 1fr" gap={4} mb={5}>
+              <Field.Root>
+                <Field.Label color="fg" fontSize="sm">Dataset Name</Field.Label>
+                <Input size="sm" value={folderDatasetName} onChange={e => setFolderDatasetName(e.target.value)}
+                  bg="bg.muted" borderColor="border" disabled={folderUploading} />
+                <Field.HelperText fontSize="xs" color={folderDatasetName.trim() ? (folderDatasetExists ? "blue.400" : "green.400") : "fg.muted"}>
+                  {folderDatasetName.trim()
+                    ? (folderDatasetExists ? "Existing dataset — files will be added" : "New dataset will be created")
+                    : "Required"}
+                </Field.HelperText>
+              </Field.Root>
+              <Field.Root>
+                <Field.Label color="fg" fontSize="sm">Language</Field.Label>
+                <LangSelect value={folderLanguage} onChange={setFolderLanguage} disabled={folderUploading} />
+              </Field.Root>
+            </Grid>
+
+            {/* Subfolder breakdown */}
+            <Text fontSize="xs" color="fg.muted" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide" mb={2}>
+              Detected Subfolders
+            </Text>
+            <Box bg="bg.muted" rounded="md" p={3} mb={4}>
+              {folderAnalysis.subfolders.length === 0 ? (
+                <Text fontSize="sm" color="fg.muted">No valid subfolders detected.</Text>
+              ) : (
+                folderAnalysis.subfolders.map(sf => (
+                  <Flex key={sf.name} align="center" gap={3} mb={1}>
+                    {sf.isKnown
+                      ? <CheckCircle size={13} color="var(--chakra-colors-green-400)" />
+                      : <AlertCircle size={13} color="var(--chakra-colors-red-400)" />}
+                    <Text fontSize="sm" fontFamily="mono" color={sf.isKnown ? "fg" : "fg.muted"} minW="160px">{sf.name}/</Text>
+                    <Text fontSize="xs" color="fg.muted">→</Text>
+                    <Badge colorPalette={sf.isKnown ? typeColor(sf.type) : "red"} size="sm">
+                      {sf.isKnown ? typeLabel(sf.type) : "Skipped"}
+                    </Badge>
+                    <Text fontSize="xs" color="fg.muted">{sf.count} files</Text>
+                  </Flex>
+                ))
+              )}
+            </Box>
+
+            {/* Warnings */}
+            {folderAnalysis.warnings.length > 0 && (
+              <Box mb={4}>
+                {folderAnalysis.warnings.map((w, i) => (
+                  <Flex key={i} align="flex-start" gap={2} mb={1}>
+                    <AlertTriangle size={12} color="var(--chakra-colors-yellow-400)" style={{ marginTop: 2, flexShrink: 0 }} />
+                    <Text fontSize="xs" color="yellow.300">{w}</Text>
+                  </Flex>
+                ))}
+              </Box>
+            )}
+
+            {/* Summary */}
+            <Box bg="bg.muted" rounded="md" p={3} mb={4}>
+              <Text fontSize="sm" color="fg">
+                <Text as="span" fontWeight="bold" color="blue.400">{folderAnalysis.uploadableGroups.length}</Text>
+                {" "}file group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""} ready to upload
+                {folderAnalysis.skippedCount > 0 && (
+                  <Text as="span" color="fg.muted"> · {folderAnalysis.skippedCount} skipped (no audio)</Text>
+                )}
+              </Text>
+            </Box>
+
+            {/* Progress bar */}
+            {(folderUploading || folderDone) && (
+              <Box mb={4}>
+                <Flex justify="space-between" mb={1}>
+                  <Text fontSize="xs" color="fg.muted">
+                    {folderUploading ? `Uploading: ${folderProgress.current}` : "Upload complete"}
+                  </Text>
+                  <Text fontSize="xs" color="fg.muted">{folderProgress.done}/{folderProgress.total}</Text>
+                </Flex>
+                <Progress.Root value={folderProgressPct} size="sm" colorPalette={folderDone ? "green" : "blue"}>
+                  <Progress.Track rounded="full"><Progress.Range /></Progress.Track>
+                </Progress.Root>
+              </Box>
+            )}
+
+            <Button
+              colorPalette="blue" size="sm"
+              loading={folderUploading}
+              disabled={folderAnalysis.uploadableGroups.length === 0 || !folderDatasetName.trim() || folderUploading}
+              onClick={uploadFolderDataset}
+            >
+              <Upload size={14} />
+              Upload {folderAnalysis.uploadableGroups.length} Group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""}
+            </Button>
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }

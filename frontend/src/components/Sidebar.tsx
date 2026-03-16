@@ -28,7 +28,7 @@ interface NavItem {
 }
 
 const ADMIN_NAV: NavItem[] = [
-  { label: "Dashboard",          href: "/admin",                    icon: <BarChart2     size={18} /> },
+  { label: "Dashboard",           href: "/admin",                    icon: <BarChart2     size={18} /> },
   { label: "Upload Files",        href: "/admin/upload",             icon: <Upload        size={18} /> },
   { label: "Datasets",            href: "/admin/datasets",           icon: <Database      size={18} /> },
   { label: "Manage Annotators",   href: "/admin/annotators",         icon: <Users         size={18} /> },
