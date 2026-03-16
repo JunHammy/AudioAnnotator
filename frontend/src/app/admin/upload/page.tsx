@@ -331,19 +331,39 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
 
 function LangInput({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
-    <>
+    <Box>
       <Input
-        list="lang-presets"
         value={value}
         onChange={e => onChange(e.target.value)}
         placeholder="e.g. English, Mixed, Hokkien…"
         bg="bg.muted" borderColor="border" color="fg" size="sm"
         disabled={disabled}
+        mb={2}
       />
-      <datalist id="lang-presets">
-        {LANGUAGE_PRESETS.map(l => <option key={l} value={l} />)}
-      </datalist>
-    </>
+      <Flex gap={1} flexWrap="wrap">
+        {LANGUAGE_PRESETS.map(l => (
+          <Box
+            key={l}
+            as="button"
+            type="button"
+            px={2} py={0.5}
+            fontSize="xs"
+            rounded="full"
+            borderWidth="1px"
+            cursor={disabled ? "not-allowed" : "pointer"}
+            opacity={disabled ? 0.5 : 1}
+            borderColor={value === l ? "blue.400" : "border"}
+            bg={value === l ? "blue.900" : "bg.muted"}
+            color={value === l ? "blue.300" : "fg.muted"}
+            _hover={disabled ? {} : { borderColor: "blue.400", color: "blue.300" }}
+            transition="all 0.1s"
+            onClick={() => { if (!disabled) onChange(l); }}
+          >
+            {l}
+          </Box>
+        ))}
+      </Flex>
+    </Box>
   );
 }
 
@@ -987,6 +1007,11 @@ export default function UploadFilesPage() {
               {/* ── SINGLE-TYPE MODE UI ── */}
               {folderAnalysis.mode === "single_type" && (
                 <>
+                  {/* Overwrite note */}
+                  <Box bg="bg.muted" borderWidth="1px" borderColor="border" rounded="md" px={3} py={2} mb={4} fontSize="xs" color="fg.muted">
+                    Re-linking is safe — if a file already has this JSON type, the new file <Text as="span" color="fg">overwrites</Text> the previous one. No duplicates are created.
+                  </Box>
+
                   {/* Match table */}
                   <Box bg="bg.muted" rounded="md" p={3} mb={4}>
                     <Text fontSize="sm" color="fg" mb={1}>

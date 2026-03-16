@@ -74,18 +74,27 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    changes: dict = {}
     if body.username is not None and body.username != user.username:
         conflict = await db.execute(select(User).where(User.username == body.username))
         if conflict.scalar_one_or_none():
             raise HTTPException(status_code=400, detail="Username already taken.")
+        changes["old_username"] = user.username
+        changes["new_username"] = body.username
         user.username = body.username
-    if body.is_active is not None:
+    if body.is_active is not None and body.is_active != user.is_active:
+        changes["is_active"] = body.is_active
         user.is_active = body.is_active
-    if body.role is not None:
+    if body.role is not None and body.role != user.role:
+        changes["role"] = body.role
         user.role = body.role
     if body.password is not None:
+        changes["password_reset"] = True
         user.password_hash = hash_password(body.password)
 
     await db.flush()
     await db.refresh(user)
+    if changes:
+        await write_audit_log(db, _admin.id, "update_user", "user", user.id,
+                              {"username": user.username, **changes})
     return user

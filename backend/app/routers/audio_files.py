@@ -333,6 +333,8 @@ async def add_json_to_file(
     # emotion_gender: stored in JSON store only; used during review finalisation
 
     await db.flush()
+    await write_audit_log(db, admin.id, "link_json", "audio_file", file_id,
+                          {"json_type": json_type, "filename": af.filename})
     result2 = await db.execute(
         select(AudioFile)
         .options(selectinload(AudioFile.original_json_store))

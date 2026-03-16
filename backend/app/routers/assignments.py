@@ -145,6 +145,9 @@ async def update_assignment_status(
     if body.status == "completed":
         assignment.completed_at = datetime.now(timezone.utc)
         await db.flush()
+        await write_audit_log(db, current_user.id, "complete_task", "assignment", assignment.id,
+                              {"audio_file_id": assignment.audio_file_id,
+                               "task_type": assignment.task_type})
 
         # Auto-lock collaborative tasks when ALL annotators for that type complete
         if assignment.task_type in ("speaker", "gender", "transcription"):
