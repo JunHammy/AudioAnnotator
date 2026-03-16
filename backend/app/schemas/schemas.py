@@ -73,6 +73,16 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     role:      Optional[str]  = None
     password:  Optional[str]  = None
+    username:  Optional[str]  = None
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not _USERNAME_RE.match(v):
+                raise ValueError("Username must be 3–50 characters, letters/numbers/underscore only.")
+        return v
 
     @field_validator("password")
     @classmethod

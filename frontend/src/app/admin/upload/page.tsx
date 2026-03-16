@@ -20,7 +20,7 @@ import {
 } from "@chakra-ui/react";
 import {
   AlertCircle, AlertTriangle, CheckCircle, FolderOpen,
-  Loader, MinusCircle, Upload, X,
+  Link2, Loader, MinusCircle, Upload, X,
 } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
@@ -30,6 +30,7 @@ import ToastWizard from "@/lib/toastWizard";
 interface Dataset { id: number; name: string; }
 type FileType = "audio" | "emotion_gender" | "speaker" | "transcription" | "unknown";
 type UploadStatus = "ready" | "uploading" | "done" | "skipped" | "error";
+type FolderMode = "dataset" | "single_type";
 
 interface QueueItem {
   id: string;
@@ -78,11 +79,24 @@ interface FolderGroup {
   transcription?:  ParsedFolderFile;
 }
 
+interface SingleTypeMatch {
+  stem: string;
+  file: File;
+  existingFileId: number;
+  existingFilename: string;
+}
+
 interface FolderAnalysis {
   rootFolder: string;
+  mode: FolderMode;
+  // dataset mode
   subfolders: SubfolderSummary[];
   uploadableGroups: FolderGroup[];
-  skippedCount: number;
+  datasetSkippedCount: number;
+  // single_type mode
+  singleType: FileType | null;
+  matches: SingleTypeMatch[];
+  unmatched: string[];
   warnings: string[];
 }
 
@@ -169,34 +183,86 @@ function groupReady(g: FileGroup): boolean {
 
 // ── Folder analysis ────────────────────────────────────────────────────────
 
-function parseFolderFiles(files: FileList): FolderAnalysis {
+function parseFolderFiles(files: FileList, existingMap: Map<string, ExistingFile>): FolderAnalysis {
+  const allFiles = Array.from(files);
+
+  // Determine root folder name from webkitRelativePath
+  const firstWithPath = allFiles.find(f => (f as any).webkitRelativePath);
+  const rootFolder = firstWithPath
+    ? ((firstWithPath as any).webkitRelativePath as string).split("/")[0]
+    : "Unknown";
+
   const parsed: ParsedFolderFile[] = [];
 
-  for (const file of Array.from(files)) {
+  for (const file of allFiles) {
     const rp = (file as any).webkitRelativePath as string | undefined;
     if (!rp) continue;
     const parts = rp.split("/");
-    if (parts.length < 3) continue;
-    const subfolder = parts[1].toLowerCase();
-    const filename  = parts[parts.length - 1];
-    const ext       = filename.split(".").pop()?.toLowerCase() ?? "";
+    const filename = parts[parts.length - 1];
+    const ext = filename.split(".").pop()?.toLowerCase() ?? "";
     if (!["wav", "mp3", "json"].includes(ext)) continue;
+
+    let subfolder: string;
+    if (parts.length >= 3) {
+      // dataset mode: rootfolder/subfolder/file
+      subfolder = parts[1].toLowerCase();
+    } else if (parts.length === 2) {
+      // single-type mode: typefolder/file — root folder IS the type
+      subfolder = parts[0].toLowerCase();
+    } else {
+      continue;
+    }
+
     const detectedType: FileType = SUBFOLDER_TYPE_MAP[subfolder] ?? "unknown";
-    const stem = filename.replace(/\.[^.]+$/, "");
+    // Use detectFileType stem to strip known JSON suffixes (_emotion, _speaker, etc.)
+    const stem = detectFileType(filename).stem;
     parsed.push({ file, subfolder, detectedType, stem });
   }
 
-  const firstPath = Array.from(files).find(f => (f as any).webkitRelativePath);
-  const rootFolder = firstPath
-    ? ((firstPath as any).webkitRelativePath as string).split("/")[0]
-    : "";
+  const emptyResult = (warnings: string[]): FolderAnalysis => ({
+    rootFolder, mode: "dataset",
+    subfolders: [], uploadableGroups: [], datasetSkippedCount: 0,
+    singleType: null, matches: [], unmatched: [],
+    warnings,
+  });
 
   if (parsed.length === 0) {
-    return { rootFolder: rootFolder || "Unknown", subfolders: [], uploadableGroups: [], skippedCount: 0, warnings: ["No valid audio or JSON files found inside the subfolders."] };
+    return emptyResult(["No valid audio or JSON files found. Make sure you selected the correct folder."]);
   }
 
-  const warnings: string[] = [];
+  // Detect mode: single-type = root folder name is a recognised type AND no depth-3 paths
+  const hasDepth3 = allFiles.some(f => {
+    const rp = (f as any).webkitRelativePath as string;
+    return rp && rp.split("/").length >= 3;
+  });
+  const rootType = SUBFOLDER_TYPE_MAP[rootFolder.toLowerCase()];
+  const isSingleType = !hasDepth3 && rootType !== undefined && rootType !== "audio";
 
+  if (isSingleType) {
+    const matches: SingleTypeMatch[] = [];
+    const unmatched: string[] = [];
+    for (const p of parsed) {
+      if (p.detectedType === "unknown") continue;
+      const ex = existingMap.get(p.stem);
+      if (ex) {
+        matches.push({ stem: p.stem, file: p.file, existingFileId: ex.id, existingFilename: ex.filename });
+      } else {
+        unmatched.push(p.stem);
+      }
+    }
+    const warnings: string[] = [];
+    if (unmatched.length > 0)
+      warnings.push(`${unmatched.length} file(s) have no matching audio in the system and will be skipped`);
+    return {
+      rootFolder, mode: "single_type",
+      subfolders: [], uploadableGroups: [], datasetSkippedCount: 0,
+      singleType: rootType, matches, unmatched,
+      warnings,
+    };
+  }
+
+  // Dataset mode
+  const warnings: string[] = [];
   const sfMap = new Map<string, SubfolderSummary>();
   for (const f of parsed) {
     if (!sfMap.has(f.subfolder)) sfMap.set(f.subfolder, { name: f.subfolder, type: f.detectedType, isKnown: f.detectedType !== "unknown", count: 0 });
@@ -204,7 +270,7 @@ function parseFolderFiles(files: FileList): FolderAnalysis {
   }
   const subfolders = [...sfMap.values()];
   for (const sf of subfolders) {
-    if (!sf.isKnown) warnings.push(`Subfolder "${sf.name}" is not recognised — its ${sf.count} file(s) will be skipped`);
+    if (!sf.isKnown) warnings.push(`Subfolder "${sf.name}" is not recognised — its files will be skipped`);
   }
 
   const groupMap = new Map<string, FolderGroup>();
@@ -220,10 +286,16 @@ function parseFolderFiles(files: FileList): FolderAnalysis {
 
   const allGroups        = [...groupMap.values()];
   const uploadableGroups = allGroups.filter(g => !!g.audio);
-  const skippedCount     = allGroups.length - uploadableGroups.length;
-  if (skippedCount > 0) warnings.push(`${skippedCount} stem(s) have JSON but no audio — they will be skipped`);
+  const datasetSkippedCount = allGroups.length - uploadableGroups.length;
+  if (datasetSkippedCount > 0)
+    warnings.push(`${datasetSkippedCount} stem(s) have JSON but no audio — they will be skipped`);
 
-  return { rootFolder, subfolders, uploadableGroups, skippedCount, warnings };
+  return {
+    rootFolder, mode: "dataset",
+    subfolders, uploadableGroups, datasetSkippedCount,
+    singleType: null, matches: [], unmatched: [],
+    warnings,
+  };
 }
 
 // ── DropZone ───────────────────────────────────────────────────────────────
@@ -255,7 +327,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
   );
 }
 
-// ── LangInput — free-text with preset suggestions ──────────────────────────
+// ── LangInput ─────────────────────────────────────────────────────────────
 
 function LangInput({ value, onChange, disabled }: { value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
@@ -306,13 +378,14 @@ export default function UploadFilesPage() {
   const [datasets,      setDatasets]      = useState<Dataset[]>([]);
   const [bulkType,      setBulkType]      = useState<string[]>([]);
 
-  // ── Dataset tab state ─────────────────────────────────────────────────
+  // ── Folder tab state ──────────────────────────────────────────────────
   const [folderAnalysis,    setFolderAnalysis]    = useState<FolderAnalysis | null>(null);
   const [folderDatasetName, setFolderDatasetName] = useState("");
   const [folderLanguage,    setFolderLanguage]    = useState("English");
   const [folderUploading,   setFolderUploading]   = useState(false);
   const [folderProgress,    setFolderProgress]    = useState({ done: 0, total: 0, current: "" });
-  const folderInputRef = useRef<HTMLInputElement>(null);
+  // single_type results per-row status
+  const [singleResults,     setSingleResults]     = useState<Record<string, UploadStatus>>({});
 
   useEffect(() => {
     api.get("/api/audio-files").then(r => setExistingFiles(r.data)).catch(() => {});
@@ -358,7 +431,7 @@ export default function UploadFilesPage() {
         fd.append("json_file", item.file);
         fd.append("json_type", type);
         try {
-          await api.post(`/api/audio-files/${g.existingFileId}/json`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+          await api.post(`/api/audio-files/${g.existingFileId}/json`, fd, { headers: { "Content-Type": undefined } });
           updateItemStatus([item.id], "done");
           setExistingFiles(prev => prev.map(f => f.id === g.existingFileId ? { ...f, json_types: [...new Set([...f.json_types, type])] } : f));
         } catch (e: any) {
@@ -382,7 +455,7 @@ export default function UploadFilesPage() {
     fd.append("language", language.trim());
     if (datasetId[0]) fd.append("dataset_id", datasetId[0]);
     try {
-      const res = await api.post("/api/audio-files", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      const res = await api.post("/api/audio-files", fd, { headers: { "Content-Type": undefined } });
       updateItemStatus(ids, "done");
       setExistingFiles(prev => [res.data, ...prev]);
       ToastWizard.standard("success", "Uploaded", `${g.stem} uploaded.`, 3000, true);
@@ -390,11 +463,8 @@ export default function UploadFilesPage() {
       const msg = e?.response?.data?.detail ?? "Upload failed.";
       const alreadyExists = typeof msg === "string" && msg.toLowerCase().includes("already exists");
       updateItemStatus(ids, alreadyExists ? "skipped" : "error", msg);
-      if (alreadyExists) {
-        ToastWizard.standard("warning", "Already exists", `${g.stem} is already in the system — skipped.`, 4000, true);
-      } else {
-        ToastWizard.standard("error", "Upload failed", `${g.stem}: ${msg}`, 5000, true);
-      }
+      if (alreadyExists) ToastWizard.standard("warning", "Already exists", `${g.stem} skipped.`, 4000, true);
+      else ToastWizard.standard("error", "Upload failed", `${g.stem}: ${msg}`, 5000, true);
     }
   }
 
@@ -425,20 +495,20 @@ export default function UploadFilesPage() {
 
   const unknownItems = queue.filter(i => i.fileType === "unknown");
 
-  // ── Dataset folder upload ─────────────────────────────────────────────
+  // ── Folder upload ─────────────────────────────────────────────────────
 
   function handleFolderSelect(files: FileList | null) {
     if (!files || files.length === 0) return;
-    if (folderInputRef.current) folderInputRef.current.value = "";
-
-    const analysis = parseFolderFiles(files);
+    const analysis = parseFolderFiles(files, existingMap);
     setFolderAnalysis(analysis);
-    setFolderDatasetName(analysis.rootFolder);
+    setFolderDatasetName(analysis.mode === "dataset" ? analysis.rootFolder : "");
     setFolderProgress({ done: 0, total: 0, current: "" });
+    setSingleResults({});
   }
 
+  // Dataset mode upload
   async function uploadFolderDataset() {
-    if (!folderAnalysis || folderAnalysis.uploadableGroups.length === 0) return;
+    if (!folderAnalysis || folderAnalysis.mode !== "dataset" || folderAnalysis.uploadableGroups.length === 0) return;
     const dsName = folderDatasetName.trim();
     if (!dsName) { ToastWizard.standard("error", "Dataset name required", "Please enter a dataset name."); return; }
 
@@ -466,7 +536,7 @@ export default function UploadFilesPage() {
         fd.append("language", folderLanguage.trim() || "English");
         if (resolvedId) fd.append("dataset_id", String(resolvedId));
         try {
-          await api.post("/api/audio-files", fd, { headers: { "Content-Type": "multipart/form-data" } });
+          await api.post("/api/audio-files", fd, { headers: { "Content-Type": undefined } });
           done++;
         } catch (e: any) {
           const detail = e?.response?.data?.detail ?? "";
@@ -482,9 +552,9 @@ export default function UploadFilesPage() {
       if (errors  > 0) parts.push(`${errors} failed`);
       const summary = parts.join(", ");
 
-      if (errors === 0 && skipped === 0) ToastWizard.standard("success", "Upload complete",  `${summary} to "${dsName}".`);
-      else if (errors === 0)             ToastWizard.standard("warning", "Upload complete",   `${summary} — existing files were skipped.`);
-      else                               ToastWizard.standard("error",   "Partial upload",    summary);
+      if (errors === 0 && skipped === 0) ToastWizard.standard("success", "Upload complete", `${summary} to "${dsName}".`);
+      else if (errors === 0)             ToastWizard.standard("warning", "Upload complete", `${summary} — duplicates skipped.`);
+      else                               ToastWizard.standard("error",   "Partial upload",  summary);
     } catch (e: any) {
       ToastWizard.standard("error", "Upload failed", e?.response?.data?.detail ?? "Unknown error");
     } finally {
@@ -492,11 +562,45 @@ export default function UploadFilesPage() {
     }
   }
 
+  // Single-type mode upload (link JSONs to existing audio)
+  async function uploadSingleTypeFolder() {
+    if (!folderAnalysis || folderAnalysis.mode !== "single_type" || folderAnalysis.matches.length === 0) return;
+    const jsonType = folderAnalysis.singleType!;
+
+    setFolderUploading(true);
+    const initResults: Record<string, UploadStatus> = {};
+    for (const m of folderAnalysis.matches) initResults[m.stem] = "ready";
+    setSingleResults(initResults);
+    setFolderProgress({ done: 0, total: folderAnalysis.matches.length, current: "" });
+
+    let done = 0, errors = 0;
+    for (const match of folderAnalysis.matches) {
+      setSingleResults(prev => ({ ...prev, [match.stem]: "uploading" }));
+      setFolderProgress(p => ({ ...p, current: match.stem }));
+      const fd = new FormData();
+      fd.append("json_file", match.file);
+      fd.append("json_type", jsonType);
+      try {
+        await api.post(`/api/audio-files/${match.existingFileId}/json`, fd, { headers: { "Content-Type": undefined } });
+        done++;
+        setSingleResults(prev => ({ ...prev, [match.stem]: "done" }));
+      } catch {
+        errors++;
+        setSingleResults(prev => ({ ...prev, [match.stem]: "error" }));
+      }
+      setFolderProgress({ done: done + errors, total: folderAnalysis.matches.length, current: match.stem });
+    }
+
+    setFolderUploading(false);
+    if (errors === 0) ToastWizard.standard("success", "Link complete", `${done} ${typeLabel(jsonType)} file(s) linked to existing audio.`);
+    else              ToastWizard.standard("warning", "Partial link",  `${done} linked, ${errors} failed.`);
+  }
+
   const folderDatasetExists = datasets.some(d => d.name.toLowerCase() === folderDatasetName.trim().toLowerCase());
   const folderProgressPct   = folderProgress.total > 0 ? Math.round((folderProgress.done / folderProgress.total) * 100) : 0;
   const folderDone          = !folderUploading && folderProgress.total > 0;
 
-  // ── Dataset options for files tab ─────────────────────────────────────
+  // ── Dataset options ───────────────────────────────────────────────────
   const datasetOpts = createListCollection({
     items: [{ label: "No dataset", value: "" }, ...datasets.map(d => ({ label: d.name, value: String(d.id) }))],
   });
@@ -507,27 +611,17 @@ export default function UploadFilesPage() {
     <Box p={8} maxW="1100px">
       <Heading size="lg" color="fg" mb={1}>Upload Files</Heading>
       <Text color="fg.muted" mb={6}>
-        Use the <Text as="span" fontWeight="semibold" color="fg">Files</Text> tab to upload individual audio and JSON files.
-        Use the <Text as="span" fontWeight="semibold" color="fg">Dataset Folder</Text> tab to bulk-upload an entire dataset organised into subfolders.
+        Use the <Text as="span" fontWeight="semibold" color="fg">Files</Text> tab for individual files.
+        Use the <Text as="span" fontWeight="semibold" color="fg">Folder</Text> tab for bulk dataset or single-type folder uploads.
       </Text>
-
-      {/* Hidden folder input */}
-      <input
-        ref={folderInputRef}
-        type="file"
-        // @ts-ignore
-        webkitdirectory=""
-        style={{ display: "none" }}
-        onChange={e => handleFolderSelect(e.target.files)}
-      />
 
       <Tabs.Root defaultValue="files" variant="line">
         <Tabs.List borderBottomWidth="1px" borderColor="border" mb={6}>
-          <Tabs.Trigger value="files"   color="fg.muted" _selected={{ color: "blue.400", borderColor: "blue.400" }}>
+          <Tabs.Trigger value="files" color="fg.muted" _selected={{ color: "blue.400", borderColor: "blue.400" }}>
             <Upload size={14} style={{ marginRight: 6 }} /> Files
           </Tabs.Trigger>
-          <Tabs.Trigger value="dataset" color="fg.muted" _selected={{ color: "blue.400", borderColor: "blue.400" }}>
-            <FolderOpen size={14} style={{ marginRight: 6 }} /> Dataset Folder
+          <Tabs.Trigger value="folder" color="fg.muted" _selected={{ color: "blue.400", borderColor: "blue.400" }}>
+            <FolderOpen size={14} style={{ marginRight: 6 }} /> Folder
           </Tabs.Trigger>
         </Tabs.List>
 
@@ -596,11 +690,7 @@ export default function UploadFilesPage() {
 
           {/* Bulk type bar */}
           {unknownItems.length > 0 && (
-            <Flex
-              align="center" gap={3} px={4} py={3}
-              bg="orange.900" borderWidth="1px" borderColor="orange.700"
-              rounded="md" mb={4} flexWrap="wrap"
-            >
+            <Flex align="center" gap={3} px={4} py={3} bg="orange.900" borderWidth="1px" borderColor="orange.700" rounded="md" mb={4} flexWrap="wrap">
               <AlertTriangle size={14} color="var(--chakra-colors-orange-400)" />
               <Text fontSize="sm" color="orange.200" flex="1">
                 {unknownItems.length} file{unknownItems.length > 1 ? "s" : ""} need a type — assign individually or bulk-set here
@@ -622,22 +712,19 @@ export default function UploadFilesPage() {
                   </Select.Positioner>
                 </Portal>
               </Select.Root>
-              <Button
-                size="sm" colorPalette="orange" variant="outline"
-                disabled={!bulkType[0]}
+              <Button size="sm" colorPalette="orange" variant="outline" disabled={!bulkType[0]}
                 onClick={() => {
                   if (!bulkType[0]) return;
                   setQueue(prev => prev.map(i => i.fileType === "unknown" ? { ...i, fileType: bulkType[0] as FileType } : i));
                   setBulkType([]);
-                }}
-              >
+                }}>
                 Apply to all
               </Button>
             </Flex>
           )}
 
           {/* Queue table */}
-          {queue.length > 0 && (
+          {queue.length > 0 ? (
             <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
               <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
                 <Text fontSize="sm" fontWeight="semibold" color="fg">Upload Queue — {queue.length} file{queue.length !== 1 ? "s" : ""}</Text>
@@ -687,11 +774,8 @@ export default function UploadFilesPage() {
                           <Flex align="center" gap={1.5}>
                             {statusIcon(item.status)}
                             <Badge colorPalette={
-                              item.status === "done"        ? "green"
-                              : item.status === "skipped"   ? "orange"
-                              : item.status === "error"     ? "red"
-                              : item.status === "uploading" ? "blue"
-                              : "gray"
+                              item.status === "done" ? "green" : item.status === "skipped" ? "orange"
+                              : item.status === "error" ? "red" : item.status === "uploading" ? "blue" : "gray"
                             } size="sm">
                               {item.status === "skipped" ? "exists" : item.status}
                             </Badge>
@@ -715,98 +799,101 @@ export default function UploadFilesPage() {
                   {groups.filter(g => !g.audio && g.existingFileId).map(g => (
                     <Text key={g.stem} fontSize="xs" color="blue.300" mb={0.5}>
                       ↗ {g.stem}: will link to <Text as="span" fontFamily="mono">{g.existingFilename}</Text>
-                      {existingFiles.find(f => f.id === g.existingFileId)?.json_types?.length
-                        ? <Text as="span" color="fg.muted"> (has: {existingFiles.find(f => f.id === g.existingFileId)?.json_types.join(", ")})</Text>
-                        : null}
                     </Text>
                   ))}
                   {groups.filter(g => !g.audio && !g.existingFileId).length > 0 && (
                     <>
-                      <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1} mt={groups.some(g => !g.audio && g.existingFileId) ? 2 : 0}>
-                        No matching audio found (will not upload):
-                      </Text>
+                      <Text fontSize="xs" color="yellow.300" fontWeight="semibold" mb={1} mt={2}>No matching audio found (will not upload):</Text>
                       {groups.filter(g => !g.audio && !g.existingFileId).map(g => (
-                        <Text key={g.stem} fontSize="xs" color="fg.muted">{g.stem}: add the .wav/.mp3 or upload audio first</Text>
+                        <Text key={g.stem} fontSize="xs" color="fg.muted">{g.stem}: upload audio first</Text>
                       ))}
                     </>
                   )}
                 </Box>
               )}
             </Box>
-          )}
-
-          {queue.length === 0 && (
+          ) : (
             <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" px={5} py={10} textAlign="center">
               <Text color="fg.muted" fontSize="sm">No files in queue — drag files above or click to browse</Text>
             </Box>
           )}
         </Tabs.Content>
 
-        {/* ── DATASET FOLDER TAB ───────────────────────────────────── */}
-        <Tabs.Content value="dataset">
-          <Box bg="blue.900" borderWidth="1px" borderColor="blue.700" rounded="md" px={4} py={3} mb={6} fontSize="xs" color="blue.200">
-            <Text fontWeight="semibold" mb={1}>How this works</Text>
-            <Text mb={0.5}>Select a <Text as="span" fontWeight="bold">root folder</Text> that contains named subfolders:</Text>
-            <Text fontFamily="mono" mb={0.5} pl={2}>
-              my_dataset/ → audio/ · emotion_gender/ · speaker/ · transcription/
+        {/* ── FOLDER TAB ───────────────────────────────────────────── */}
+        <Tabs.Content value="folder">
+          {/* Info box */}
+          <Box bg="blue.900" borderWidth="1px" borderColor="blue.700" rounded="md" px={4} py={3} mb={5} fontSize="xs" color="blue.200">
+            <Text fontWeight="semibold" mb={1}>Two modes — auto-detected from the folder you select:</Text>
+            <Text mb={0.5}>
+              <Text as="span" fontWeight="bold" color="blue.300">Dataset mode</Text>
+              {" "}— select a root folder that contains subfolders named{" "}
+              <Text as="span" fontFamily="mono">audio/</Text>,{" "}
+              <Text as="span" fontFamily="mono">emotion_gender/</Text>,{" "}
+              <Text as="span" fontFamily="mono">speaker/</Text>,{" "}
+              <Text as="span" fontFamily="mono">transcription/</Text>.
+              Audio files and their matching JSON files are uploaded together as a new dataset.
             </Text>
-            <Text>All audio files with matching JSON stems are grouped and uploaded as a batch to a single dataset.</Text>
+            <Text>
+              <Text as="span" fontWeight="bold" color="purple.300">Single-type mode</Text>
+              {" "}— select a folder named{" "}
+              <Text as="span" fontFamily="mono">emotion_gender/</Text>,{" "}
+              <Text as="span" fontFamily="mono">speaker/</Text>, or{" "}
+              <Text as="span" fontFamily="mono">transcription/</Text> directly.
+              JSON files are matched to existing audio by filename and linked automatically.
+            </Text>
           </Box>
 
+          {/* Hidden folder input — webkitdirectory must be in JSX so React keeps it in the DOM */}
           {!folderAnalysis ? (
-            <Flex
-              align="center" gap={4} p={6}
-              bg="bg.subtle" rounded="lg" borderWidth="2px" borderStyle="dashed" borderColor="border"
-              cursor="pointer" transition="border-color 0.15s"
-              _hover={{ borderColor: "blue.500" }}
-              onClick={() => folderInputRef.current?.click()}
-              direction="column"
-            >
-              <FolderOpen size={32} color="var(--chakra-colors-fg-muted)" />
-              <Box textAlign="center">
-                <Text fontSize="sm" fontWeight="semibold" color="fg" mb={1}>Select Dataset Root Folder</Text>
-                <Text fontSize="xs" color="fg.muted">
-                  Choose the top-level folder that contains your <Text as="span" fontFamily="mono">audio/</Text>,{" "}
-                  <Text as="span" fontFamily="mono">emotion_gender/</Text>, etc. subfolders
-                </Text>
-              </Box>
-              <Button size="sm" colorPalette="blue" variant="outline">
-                Browse…
-              </Button>
-            </Flex>
+            <Box>
+              <input
+                id="folder-picker"
+                type="file"
+                // @ts-ignore
+                webkitdirectory=""
+                directory=""
+                style={{ display: "none" }}
+                onChange={e => handleFolderSelect(e.target.files)}
+              />
+              <Flex
+                align="center" gap={4} p={8}
+                bg="bg.subtle" rounded="lg" borderWidth="2px" borderStyle="dashed" borderColor="border"
+                cursor="pointer" transition="border-color 0.15s"
+                _hover={{ borderColor: "blue.500" }}
+                onClick={() => document.getElementById("folder-picker")?.click()}
+                direction="column"
+              >
+                <FolderOpen size={32} color="var(--chakra-colors-fg-muted)" />
+                <Box textAlign="center">
+                  <Text fontSize="sm" fontWeight="semibold" color="fg" mb={1}>Select a folder</Text>
+                  <Text fontSize="xs" color="fg.muted">
+                    Dataset root folder (with subfolders) or a single-type folder like{" "}
+                    <Text as="span" fontFamily="mono">emotion_gender/</Text>
+                  </Text>
+                </Box>
+                <Button size="sm" colorPalette="blue" variant="outline">Browse…</Button>
+              </Flex>
+            </Box>
           ) : (
             <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}>
-              <Flex justify="space-between" align="center" mb={5}>
-                <Text fontWeight="semibold" color="fg">
-                  Folder: <Text as="span" fontFamily="mono" color="blue.300">{folderAnalysis.rootFolder}</Text>
-                </Text>
+              {/* Header */}
+              <Flex justify="space-between" align="center" mb={4}>
+                <Flex align="center" gap={3}>
+                  <Text fontWeight="semibold" color="fg" fontFamily="mono">{folderAnalysis.rootFolder}/</Text>
+                  <Badge colorPalette={folderAnalysis.mode === "dataset" ? "blue" : "purple"} size="sm">
+                    {folderAnalysis.mode === "dataset" ? "Dataset mode" : "Single-type mode"}
+                  </Badge>
+                  {folderAnalysis.mode === "single_type" && folderAnalysis.singleType && (
+                    <Badge colorPalette={typeColor(folderAnalysis.singleType)} size="sm">
+                      {typeLabel(folderAnalysis.singleType)}
+                    </Badge>
+                  )}
+                </Flex>
                 <Button size="xs" variant="ghost" color="fg.muted" disabled={folderUploading}
-                  onClick={() => { setFolderAnalysis(null); if (folderInputRef.current) folderInputRef.current.value = ""; }}>
+                  onClick={() => { setFolderAnalysis(null); setSingleResults({}); setFolderProgress({ done: 0, total: 0, current: "" }); }}>
                   <X size={12} /> Change folder
                 </Button>
               </Flex>
-
-              {/* Subfolder breakdown */}
-              <Text fontSize="xs" color="fg.muted" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide" mb={2}>
-                Detected Subfolders
-              </Text>
-              <Box bg="bg.muted" rounded="md" p={3} mb={4}>
-                {folderAnalysis.subfolders.length === 0 ? (
-                  <Text fontSize="sm" color="fg.muted">No recognised subfolders found.</Text>
-                ) : folderAnalysis.subfolders.map(sf => (
-                  <Flex key={sf.name} align="center" gap={3} mb={1}>
-                    {sf.isKnown
-                      ? <CheckCircle size={13} color="var(--chakra-colors-green-400)" />
-                      : <AlertCircle size={13} color="var(--chakra-colors-red-400)" />}
-                    <Text fontSize="sm" fontFamily="mono" color={sf.isKnown ? "fg" : "fg.muted"} minW="160px">{sf.name}/</Text>
-                    <Text fontSize="xs" color="fg.muted">→</Text>
-                    <Badge colorPalette={sf.isKnown ? typeColor(sf.type) : "red"} size="sm">
-                      {sf.isKnown ? typeLabel(sf.type) : "Skipped"}
-                    </Badge>
-                    <Text fontSize="xs" color="fg.muted">{sf.count} files</Text>
-                  </Flex>
-                ))}
-              </Box>
 
               {/* Warnings */}
               {folderAnalysis.warnings.length > 0 && (
@@ -820,59 +907,154 @@ export default function UploadFilesPage() {
                 </Box>
               )}
 
-              {/* Summary box */}
-              <Box bg="bg.muted" rounded="md" p={3} mb={5}>
-                <Text fontSize="sm" color="fg">
-                  <Text as="span" fontWeight="bold" color="blue.400">{folderAnalysis.uploadableGroups.length}</Text>
-                  {" "}file group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""} ready to upload
-                  {folderAnalysis.skippedCount > 0 && (
-                    <Text as="span" color="fg.muted"> · {folderAnalysis.skippedCount} skipped (no audio)</Text>
-                  )}
-                </Text>
-              </Box>
+              {/* ── DATASET MODE UI ── */}
+              {folderAnalysis.mode === "dataset" && (
+                <>
+                  {/* Subfolders */}
+                  <Text fontSize="xs" color="fg.muted" fontWeight="semibold" textTransform="uppercase" letterSpacing="wide" mb={2}>Detected Subfolders</Text>
+                  <Box bg="bg.muted" rounded="md" p={3} mb={4}>
+                    {folderAnalysis.subfolders.length === 0 ? (
+                      <Text fontSize="sm" color="fg.muted">No recognised subfolders found.</Text>
+                    ) : folderAnalysis.subfolders.map(sf => (
+                      <Flex key={sf.name} align="center" gap={3} mb={1}>
+                        {sf.isKnown
+                          ? <CheckCircle size={13} color="var(--chakra-colors-green-400)" />
+                          : <AlertCircle size={13} color="var(--chakra-colors-red-400)" />}
+                        <Text fontSize="sm" fontFamily="mono" color={sf.isKnown ? "fg" : "fg.muted"} minW="160px">{sf.name}/</Text>
+                        <Badge colorPalette={sf.isKnown ? typeColor(sf.type) : "red"} size="sm">
+                          {sf.isKnown ? typeLabel(sf.type) : "Skipped"}
+                        </Badge>
+                        <Text fontSize="xs" color="fg.muted">{sf.count} files</Text>
+                      </Flex>
+                    ))}
+                  </Box>
 
-              {/* Dataset settings */}
-              <Grid templateColumns="1fr 1fr" gap={4} mb={5}>
-                <Field.Root>
-                  <Field.Label color="fg" fontSize="sm">Dataset Name</Field.Label>
-                  <Input size="sm" value={folderDatasetName} onChange={e => setFolderDatasetName(e.target.value)}
-                    bg="bg.muted" borderColor="border" disabled={folderUploading} />
-                  <Field.HelperText fontSize="xs" color={folderDatasetName.trim() ? (folderDatasetExists ? "blue.400" : "green.400") : "fg.muted"}>
-                    {folderDatasetName.trim()
-                      ? (folderDatasetExists ? "Existing dataset — files will be added" : "New dataset will be created")
-                      : "Required"}
-                  </Field.HelperText>
-                </Field.Root>
-                <Field.Root>
-                  <Field.Label color="fg" fontSize="sm">Language</Field.Label>
-                  <LangInput value={folderLanguage} onChange={setFolderLanguage} disabled={folderUploading} />
-                </Field.Root>
-              </Grid>
-
-              {/* Progress bar */}
-              {(folderUploading || folderDone) && (
-                <Box mb={4}>
-                  <Flex justify="space-between" mb={1}>
-                    <Text fontSize="xs" color="fg.muted">
-                      {folderUploading ? `Uploading: ${folderProgress.current}` : "Upload complete"}
+                  {/* Summary */}
+                  <Box bg="bg.muted" rounded="md" p={3} mb={4}>
+                    <Text fontSize="sm" color="fg">
+                      <Text as="span" fontWeight="bold" color="blue.400">{folderAnalysis.uploadableGroups.length}</Text>
+                      {" "}file group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""} ready to upload
+                      {folderAnalysis.datasetSkippedCount > 0 && (
+                        <Text as="span" color="fg.muted"> · {folderAnalysis.datasetSkippedCount} skipped (no audio)</Text>
+                      )}
                     </Text>
-                    <Text fontSize="xs" color="fg.muted">{folderProgress.done}/{folderProgress.total}</Text>
-                  </Flex>
-                  <Progress.Root value={folderProgressPct} size="sm" colorPalette={folderDone ? "green" : "blue"}>
-                    <Progress.Track rounded="full"><Progress.Range /></Progress.Track>
-                  </Progress.Root>
-                </Box>
+                  </Box>
+
+                  {/* Settings */}
+                  <Grid templateColumns="1fr 1fr" gap={4} mb={5}>
+                    <Field.Root>
+                      <Field.Label color="fg" fontSize="sm">Dataset Name</Field.Label>
+                      <Input size="sm" value={folderDatasetName} onChange={e => setFolderDatasetName(e.target.value)}
+                        bg="bg.muted" borderColor="border" disabled={folderUploading} />
+                      <Field.HelperText fontSize="xs" color={folderDatasetName.trim() ? (folderDatasetExists ? "blue.400" : "green.400") : "fg.muted"}>
+                        {folderDatasetName.trim()
+                          ? (folderDatasetExists ? "Existing dataset — files will be added" : "New dataset will be created")
+                          : "Required"}
+                      </Field.HelperText>
+                    </Field.Root>
+                    <Field.Root>
+                      <Field.Label color="fg" fontSize="sm">Language</Field.Label>
+                      <LangInput value={folderLanguage} onChange={setFolderLanguage} disabled={folderUploading} />
+                    </Field.Root>
+                  </Grid>
+
+                  {/* Progress */}
+                  {(folderUploading || folderDone) && (
+                    <Box mb={4}>
+                      <Flex justify="space-between" mb={1}>
+                        <Text fontSize="xs" color="fg.muted">
+                          {folderUploading ? `Uploading: ${folderProgress.current}` : "Upload complete"}
+                        </Text>
+                        <Text fontSize="xs" color="fg.muted">{folderProgress.done}/{folderProgress.total}</Text>
+                      </Flex>
+                      <Progress.Root value={folderProgressPct} size="sm" colorPalette={folderDone ? "green" : "blue"}>
+                        <Progress.Track rounded="full"><Progress.Range /></Progress.Track>
+                      </Progress.Root>
+                    </Box>
+                  )}
+
+                  <Button
+                    colorPalette="blue" size="sm" loading={folderUploading}
+                    disabled={folderAnalysis.uploadableGroups.length === 0 || !folderDatasetName.trim() || folderUploading}
+                    onClick={uploadFolderDataset}
+                  >
+                    <Upload size={14} />
+                    Upload {folderAnalysis.uploadableGroups.length} Group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""}
+                  </Button>
+                </>
               )}
 
-              <Button
-                colorPalette="blue" size="sm"
-                loading={folderUploading}
-                disabled={folderAnalysis.uploadableGroups.length === 0 || !folderDatasetName.trim() || folderUploading}
-                onClick={uploadFolderDataset}
-              >
-                <Upload size={14} />
-                Upload {folderAnalysis.uploadableGroups.length} Group{folderAnalysis.uploadableGroups.length !== 1 ? "s" : ""}
-              </Button>
+              {/* ── SINGLE-TYPE MODE UI ── */}
+              {folderAnalysis.mode === "single_type" && (
+                <>
+                  {/* Match table */}
+                  <Box bg="bg.muted" rounded="md" p={3} mb={4}>
+                    <Text fontSize="sm" color="fg" mb={1}>
+                      <Text as="span" fontWeight="bold" color="green.400">{folderAnalysis.matches.length}</Text> matched ·{" "}
+                      <Text as="span" color="fg.muted">{folderAnalysis.unmatched.length} unmatched (no audio in system)</Text>
+                    </Text>
+                  </Box>
+
+                  {folderAnalysis.matches.length > 0 && (
+                    <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" overflow="hidden" mb={4}>
+                      <Table.Root size="sm">
+                        <Table.Header>
+                          <Table.Row>
+                            {["JSON file", "Links to", "Status"].map(h => (
+                              <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={2}>{h}</Table.ColumnHeader>
+                            ))}
+                          </Table.Row>
+                        </Table.Header>
+                        <Table.Body>
+                          {folderAnalysis.matches.map(m => {
+                            const st = singleResults[m.stem];
+                            return (
+                              <Table.Row key={m.stem} _hover={{ bg: "bg.muted" }}>
+                                <Table.Cell px={4} py={2}><Text fontSize="xs" fontFamily="mono" color="fg">{m.file.name}</Text></Table.Cell>
+                                <Table.Cell px={4} py={2}><Text fontSize="xs" fontFamily="mono" color="blue.300">{m.existingFilename}</Text></Table.Cell>
+                                <Table.Cell px={4} py={2}>
+                                  {st ? (
+                                    <Flex align="center" gap={1.5}>
+                                      {statusIcon(st)}
+                                      <Badge colorPalette={st === "done" ? "green" : st === "error" ? "red" : st === "uploading" ? "blue" : "gray"} size="sm">{st}</Badge>
+                                    </Flex>
+                                  ) : (
+                                    <Badge colorPalette="green" size="sm"><Link2 size={10} /> ready</Badge>
+                                  )}
+                                </Table.Cell>
+                              </Table.Row>
+                            );
+                          })}
+                        </Table.Body>
+                      </Table.Root>
+                    </Box>
+                  )}
+
+                  {/* Progress */}
+                  {(folderUploading || folderDone) && (
+                    <Box mb={4}>
+                      <Flex justify="space-between" mb={1}>
+                        <Text fontSize="xs" color="fg.muted">
+                          {folderUploading ? `Linking: ${folderProgress.current}` : "Done"}
+                        </Text>
+                        <Text fontSize="xs" color="fg.muted">{folderProgress.done}/{folderProgress.total}</Text>
+                      </Flex>
+                      <Progress.Root value={folderProgressPct} size="sm" colorPalette={folderDone ? "green" : "purple"}>
+                        <Progress.Track rounded="full"><Progress.Range /></Progress.Track>
+                      </Progress.Root>
+                    </Box>
+                  )}
+
+                  <Button
+                    colorPalette="purple" size="sm" loading={folderUploading}
+                    disabled={folderAnalysis.matches.length === 0 || folderUploading}
+                    onClick={uploadSingleTypeFolder}
+                  >
+                    <Link2 size={14} />
+                    Link {folderAnalysis.matches.length} File{folderAnalysis.matches.length !== 1 ? "s" : ""}
+                  </Button>
+                </>
+              )}
             </Box>
           )}
         </Tabs.Content>

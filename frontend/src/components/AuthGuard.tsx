@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Center, Spinner } from "@chakra-ui/react";
 import { useAuth } from "@/hooks/useAuth";
 
 interface Props {
@@ -13,9 +12,12 @@ interface Props {
 export function AuthGuard({ role, children }: Props) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
-    if (isLoading) return;
+    if (!mounted || isLoading) return;
     if (!user) {
       router.replace("/login");
       return;
@@ -23,14 +25,12 @@ export function AuthGuard({ role, children }: Props) {
     if (role && user.role !== role) {
       router.replace(user.role === "admin" ? "/admin" : "/annotator");
     }
-  }, [user, isLoading, role, router]);
+  }, [mounted, user, isLoading, role, router]);
 
-  if (isLoading || !user || (role && user.role !== role)) {
-    return (
-      <Center h="100vh">
-        <Spinner size="xl" />
-      </Center>
-    );
+  // Return null until client-side hydration completes — prevents server/client
+  // CSS-in-JS class name mismatch from Chakra's emotion runtime.
+  if (!mounted || isLoading || !user || (role && user.role !== role)) {
+    return null;
   }
 
   return <>{children}</>;
