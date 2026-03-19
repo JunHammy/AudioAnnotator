@@ -802,9 +802,8 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                 fontFamily="mono"
                 fontSize="xs"
               />
-              {/* Show original ASR text as reference only when it exists and differs */}
-              {(segment as TranscriptSegment).original_text != null &&
-                (segment as TranscriptSegment).original_text !== editedText && (
+              {/* Show original ASR text as reference whenever it exists */}
+              {(segment as TranscriptSegment).original_text != null && (
                 <Box mt={1} px={2} py={1.5} bg="bg.muted" borderWidth="1px" borderColor="border" rounded="sm">
                   <Text fontSize="9px" color="fg.subtle" mb={0.5}>Original (ASR)</Text>
                   <Text fontSize="xs" color="fg.muted" fontFamily="mono" whiteSpace="pre-wrap">
