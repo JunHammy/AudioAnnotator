@@ -22,9 +22,10 @@ async def get_current_user(
     )
     try:
         payload = decode_token(credentials.credentials)
-        user_id = payload.get("sub")
-        if user_id is None or not isinstance(user_id, int):
+        raw_id = payload.get("sub")
+        if raw_id is None:
             raise credentials_exception
+        user_id = int(raw_id)  # sub is stored as str(user.id); raises ValueError if malformed
     except (JWTError, ValueError, TypeError):
         raise credentials_exception
 
