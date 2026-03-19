@@ -251,10 +251,15 @@ _VALID_TASK_COMBOS: set[frozenset] = {
 }
 
 
+_VALID_PRIORITIES = {"low", "normal", "high"}
+
+
 class AssignmentCreate(BaseModel):
     audio_file_id: int
     annotator_id:  int
     task_type:     str
+    priority:      str = "normal"
+    due_date:      Optional[datetime] = None
 
     @field_validator("task_type")
     @classmethod
@@ -263,11 +268,20 @@ class AssignmentCreate(BaseModel):
             raise ValueError(f"task_type must be one of: {sorted(_VALID_TASK_TYPES)}")
         return v
 
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: str) -> str:
+        if v not in _VALID_PRIORITIES:
+            raise ValueError(f"priority must be one of: {sorted(_VALID_PRIORITIES)}")
+        return v
+
 
 class AssignmentBatchCreate(BaseModel):
     audio_file_id: int
     annotator_id:  int
     task_types:    list[str]
+    priority:      str = "normal"
+    due_date:      Optional[datetime] = None
 
     @field_validator("task_types")
     @classmethod
@@ -294,6 +308,8 @@ class AssignmentResponse(BaseModel):
     status:        str
     created_at:    datetime
     completed_at:  Optional[datetime]
+    priority:      str = "normal"
+    due_date:      Optional[datetime] = None
 
 
 class AssignmentStatusUpdate(BaseModel):
@@ -304,6 +320,18 @@ class AssignmentStatusUpdate(BaseModel):
     def validate_status(cls, v: str) -> str:
         if v not in _VALID_STATUSES:
             raise ValueError(f"status must be one of: {sorted(_VALID_STATUSES)}")
+        return v
+
+
+class AssignmentMetaUpdate(BaseModel):
+    priority: Optional[str] = None
+    due_date:  Optional[datetime] = None
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _VALID_PRIORITIES:
+            raise ValueError(f"priority must be one of: {sorted(_VALID_PRIORITIES)}")
         return v
 
 

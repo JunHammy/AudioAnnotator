@@ -19,7 +19,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Lock, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Calendar, Lock, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -49,6 +49,8 @@ interface Assignment {
   annotator_id: number;
   task_type: string;
   status: string;
+  priority: string;
+  due_date: string | null;
 }
 
 const TASK_TYPES = ["emotion", "gender", "speaker", "transcription"] as const;
@@ -78,6 +80,18 @@ function statusBadge(status: string) {
   return <Badge colorPalette={map[status] ?? "gray"} size="sm">{status.replace("_", " ")}</Badge>;
 }
 
+function priorityBadge(priority: string) {
+  const map: Record<string, string> = { high: "red", normal: "blue", low: "gray" };
+  return <Badge colorPalette={map[priority] ?? "gray"} size="sm" variant="subtle">{priority}</Badge>;
+}
+
+const PRIORITY_OPTIONS = ["low", "normal", "high"] as const;
+type Priority = typeof PRIORITY_OPTIONS[number];
+
+const priorityCollection = createListCollection({
+  items: PRIORITY_OPTIONS.map(p => ({ label: p.charAt(0).toUpperCase() + p.slice(1), value: p })),
+});
+
 function groupByAnnotator(assignments: Assignment[]): Map<number, Record<TaskType, Assignment | null>> {
   const map = new Map<number, Record<TaskType, Assignment | null>>();
   for (const a of assignments) {
@@ -104,6 +118,14 @@ export default function AssignTasksPage() {
   // New assignment form state
   const [newAnnotatorId, setNewAnnotatorId] = useState<string[]>([]);
   const [newComboLabel,  setNewComboLabel]  = useState<string[]>([]);
+  const [newPriority,    setNewPriority]    = useState<string[]>(["normal"]);
+  const [newDueDate,     setNewDueDate]     = useState<string>("");
+
+  // Meta edit state (priority/due_date for existing annotator row)
+  const [editMetaKey,    setEditMetaKey]    = useState<number | null>(null); // annotatorId
+  const [editPriority,   setEditPriority]   = useState<string[]>([]);
+  const [editDueDate,    setEditDueDate]    = useState<string>("");
+  const [savingMeta,     setSavingMeta]     = useState(false);
 
   // Bulk assignment modal state
   const [bulkOpen,          setBulkOpen]          = useState(false);
@@ -217,6 +239,8 @@ export default function AssignTasksPage() {
         audio_file_id: selectedFile.id,
         annotator_id: parseInt(newAnnotatorId[0]),
         task_types: selectedTasks,
+        priority: newPriority[0] ?? "normal",
+        due_date: newDueDate || null,
       });
       // Fetch fresh assignments to reflect any skipped duplicates
       const fresh = await api.get(`/api/assignments/?audio_file_id=${selectedFile.id}`);
@@ -224,6 +248,8 @@ export default function AssignTasksPage() {
       ToastWizard.standard("success", "Annotator assigned", `${res.data.length} new task(s) assigned.`, 3000, true);
       setNewAnnotatorId([]);
       setNewComboLabel([]);
+      setNewPriority(["normal"]);
+      setNewDueDate("");
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       ToastWizard.standard("error", "Assignment failed", msg ?? "Could not create assignment.", 3000, true);
@@ -252,6 +278,31 @@ export default function AssignTasksPage() {
       ToastWizard.standard("error", "Reopen failed", "Could not reopen the task.", 3000, true);
     } finally {
       setReopening(prev => { const s = new Set(prev); s.delete(id); return s; });
+    }
+  }
+
+  async function saveMetaForAnnotator(annotatorId: number) {
+    if (!editPriority[0]) return;
+    const rows = assignments.filter(a => a.annotator_id === annotatorId);
+    setSavingMeta(true);
+    try {
+      await Promise.all(rows.map(a =>
+        api.patch(`/api/assignments/${a.id}/meta`, {
+          priority: editPriority[0],
+          due_date: editDueDate || null,
+        })
+      ));
+      setAssignments(prev => prev.map(a =>
+        a.annotator_id === annotatorId
+          ? { ...a, priority: editPriority[0], due_date: editDueDate || null }
+          : a
+      ));
+      setEditMetaKey(null);
+      ToastWizard.standard("success", "Updated", "Priority and due date saved.", 2000, true);
+    } catch {
+      ToastWizard.standard("error", "Save failed", "Could not update priority.", 3000, true);
+    } finally {
+      setSavingMeta(false);
     }
   }
 
@@ -415,6 +466,7 @@ export default function AssignTasksPage() {
                             <Table.ColumnHeader key={t} color="fg.muted" fontSize="xs" px={3} py={2} textTransform="capitalize">{t}</Table.ColumnHeader>
                           ))}
                           <Table.ColumnHeader color="fg.muted" fontSize="xs" px={3} py={2}>Status</Table.ColumnHeader>
+                          <Table.ColumnHeader color="fg.muted" fontSize="xs" px={3} py={2}>Priority / Due</Table.ColumnHeader>
                           <Table.ColumnHeader px={3} py={2} />
                         </Table.Row>
                       </Table.Header>
@@ -471,6 +523,75 @@ export default function AssignTasksPage() {
                                 </Table.Cell>
                               ))}
                               <Table.Cell px={3} py={2}>{statusBadge(overallStatus)}</Table.Cell>
+                              <Table.Cell px={3} py={2}>
+                                {editMetaKey === annotatorId ? (
+                                  <Flex direction="column" gap={1}>
+                                    <Select.Root
+                                      collection={priorityCollection}
+                                      value={editPriority}
+                                      onValueChange={d => setEditPriority(d.value)}
+                                      size="xs"
+                                    >
+                                      <Select.HiddenSelect />
+                                      <Select.Control>
+                                        <Select.Trigger bg="bg.muted" borderColor="border" color="fg" minW="80px">
+                                          <Select.ValueText />
+                                        </Select.Trigger>
+                                      </Select.Control>
+                                      <Portal>
+                                        <Select.Positioner>
+                                          <Select.Content bg="bg.subtle" borderColor="border">
+                                            {priorityCollection.items.map(item => (
+                                              <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }} fontSize="xs">
+                                                {item.label}
+                                              </Select.Item>
+                                            ))}
+                                          </Select.Content>
+                                        </Select.Positioner>
+                                      </Portal>
+                                    </Select.Root>
+                                    <Input
+                                      type="date"
+                                      size="xs"
+                                      value={editDueDate}
+                                      onChange={e => setEditDueDate(e.target.value)}
+                                      bg="bg.muted" borderColor="border" color="fg"
+                                    />
+                                    <HStack gap={1}>
+                                      <Button size="xs" colorPalette="blue" loading={savingMeta} onClick={() => saveMetaForAnnotator(annotatorId)}>Save</Button>
+                                      <Button size="xs" variant="ghost" onClick={() => setEditMetaKey(null)}>✕</Button>
+                                    </HStack>
+                                  </Flex>
+                                ) : (
+                                  <Flex direction="column" gap={0.5}>
+                                    {(() => {
+                                      const firstTask = Object.values(taskMap).find(Boolean);
+                                      const p = firstTask?.priority ?? "normal";
+                                      const d = firstTask?.due_date;
+                                      return (
+                                        <>
+                                          <Box
+                                            cursor="pointer"
+                                            onClick={() => {
+                                              setEditMetaKey(annotatorId);
+                                              setEditPriority([p]);
+                                              setEditDueDate(d ? d.split("T")[0] : "");
+                                            }}
+                                          >
+                                            {priorityBadge(p)}
+                                          </Box>
+                                          {d && (
+                                            <Flex align="center" gap={1}>
+                                              <Calendar size={10} color="var(--chakra-colors-fg-muted)" />
+                                              <Text fontSize="10px" color="fg.muted">{new Date(d).toLocaleDateString()}</Text>
+                                            </Flex>
+                                          )}
+                                        </>
+                                      );
+                                    })()}
+                                  </Flex>
+                                )}
+                              </Table.Cell>
                               <Table.Cell px={3} py={2} />
                             </Table.Row>
                           );
@@ -540,6 +661,47 @@ export default function AssignTasksPage() {
                           </Select.Positioner>
                         </Portal>
                       </Select.Root>
+                    </Box>
+
+                    {/* Priority */}
+                    <Box minW="110px">
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Priority</Text>
+                      <Select.Root
+                        collection={priorityCollection}
+                        value={newPriority}
+                        onValueChange={(d) => setNewPriority(d.value)}
+                        size="sm"
+                      >
+                        <Select.HiddenSelect />
+                        <Select.Control>
+                          <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
+                            <Select.ValueText />
+                          </Select.Trigger>
+                        </Select.Control>
+                        <Portal>
+                          <Select.Positioner>
+                            <Select.Content bg="bg.subtle" borderColor="border">
+                              {priorityCollection.items.map((item) => (
+                                <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                                  {item.label}
+                                </Select.Item>
+                              ))}
+                            </Select.Content>
+                          </Select.Positioner>
+                        </Portal>
+                      </Select.Root>
+                    </Box>
+
+                    {/* Due date */}
+                    <Box minW="140px">
+                      <Text fontSize="xs" color="fg.muted" mb={1}>Due date (optional)</Text>
+                      <Input
+                        type="date"
+                        size="sm"
+                        value={newDueDate}
+                        onChange={e => setNewDueDate(e.target.value)}
+                        bg="bg.muted" borderColor="border" color="fg"
+                      />
                     </Box>
 
                     <Button

@@ -11,6 +11,7 @@ from app.models.models import Assignment, AudioFile, User
 from app.schemas.schemas import (
     AssignmentBatchCreate,
     AssignmentCreate,
+    AssignmentMetaUpdate,
     AssignmentResponse,
     AssignmentStatusUpdate,
 )
@@ -100,6 +101,8 @@ async def create_assignment_batch(
             audio_file_id=body.audio_file_id,
             annotator_id=body.annotator_id,
             task_type=task_type,
+            priority=body.priority,
+            due_date=body.due_date,
         )
         db.add(a)
         created.append(a)
@@ -195,6 +198,26 @@ async def update_assignment_status(
                     finalized_by=assignment.annotator_id,
                 )
 
+    await db.flush()
+    await db.refresh(assignment)
+    return assignment
+
+
+@router.patch("/{assignment_id}/meta", response_model=AssignmentResponse)
+async def update_assignment_meta(
+    assignment_id: int,
+    body: AssignmentMetaUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    result = await db.execute(select(Assignment).where(Assignment.id == assignment_id))
+    assignment = result.scalar_one_or_none()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if body.priority is not None:
+        assignment.priority = body.priority
+    if body.due_date is not None:
+        assignment.due_date = body.due_date
     await db.flush()
     await db.refresh(assignment)
     return assignment

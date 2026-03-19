@@ -11,6 +11,7 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
+import { Calendar } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import api from "@/lib/axios";
@@ -24,6 +25,8 @@ interface Assignment {
   status: string;
   created_at: string;
   completed_at: string | null;
+  priority: string;
+  due_date: string | null;
 }
 
 interface EmotionProgress {
@@ -33,6 +36,13 @@ interface EmotionProgress {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+const PRIORITY_ORDER: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
+function priorityBadge(priority: string) {
+  const map: Record<string, string> = { high: "red", normal: "blue", low: "gray" };
+  return <Badge colorPalette={map[priority] ?? "gray"} size="sm" variant="subtle">{priority}</Badge>;
+}
 
 function statusBadge(status: string) {
   const map: Record<string, string> = { completed: "green", in_progress: "orange", pending: "gray" };
@@ -111,11 +121,26 @@ export default function AnnotatorTasksPage() {
     : assignments.filter((a) => a.status === filter);
 
   // Group tasks by audio file to show combined task types per row
-  const grouped = new Map<number, Assignment[]>();
+  const groupedRaw = new Map<number, Assignment[]>();
   for (const a of filtered) {
-    if (!grouped.has(a.audio_file_id)) grouped.set(a.audio_file_id, []);
-    grouped.get(a.audio_file_id)!.push(a);
+    if (!groupedRaw.has(a.audio_file_id)) groupedRaw.set(a.audio_file_id, []);
+    groupedRaw.get(a.audio_file_id)!.push(a);
   }
+
+  // Sort groups: high priority first, then by due_date ascending (null last)
+  const grouped = new Map(
+    [...groupedRaw.entries()].sort(([, aArr], [, bArr]) => {
+      const aPriority = PRIORITY_ORDER[aArr[0]?.priority ?? "normal"] ?? 1;
+      const bPriority = PRIORITY_ORDER[bArr[0]?.priority ?? "normal"] ?? 1;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      const aDue = aArr[0]?.due_date;
+      const bDue = bArr[0]?.due_date;
+      if (!aDue && !bDue) return 0;
+      if (!aDue) return 1;
+      if (!bDue) return -1;
+      return new Date(aDue).getTime() - new Date(bDue).getTime();
+    })
+  );
 
   const FILTERS = ["all", "pending", "in_progress", "completed"] as const;
 
@@ -155,7 +180,7 @@ export default function AnnotatorTasksPage() {
           <Table.Root size="sm">
             <Table.Header>
               <Table.Row>
-                {["File", "Task Types", "Status", "Assigned", "Action"].map((h) => (
+                {["File", "Task Types", "Priority", "Status", "Assigned", "Action"].map((h) => (
                   <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
                 ))}
               </Table.Row>
@@ -200,6 +225,25 @@ export default function AnnotatorTasksPage() {
                         </Text>
                       )}
                     </Table.Cell>
+                    <Table.Cell px={4} py={3}>
+                      {(() => {
+                        const p = tasks[0]?.priority ?? "normal";
+                        const d = tasks[0]?.due_date;
+                        return (
+                          <Flex direction="column" gap={0.5}>
+                            {priorityBadge(p)}
+                            {d && (
+                              <Flex align="center" gap={1}>
+                                <Calendar size={10} color="var(--chakra-colors-fg-muted)" />
+                                <Text fontSize="10px" color={new Date(d) < new Date() ? "red.400" : "fg.muted"}>
+                                  {new Date(d).toLocaleDateString()}
+                                </Text>
+                              </Flex>
+                            )}
+                          </Flex>
+                        );
+                      })()}
+                    </Table.Cell>
                     <Table.Cell px={4} py={3}>{statusBadge(overallStatus)}</Table.Cell>
                     <Table.Cell px={4} py={3}>
                       <Text fontSize="xs" color="fg.muted">
@@ -221,7 +265,7 @@ export default function AnnotatorTasksPage() {
               })}
               {grouped.size === 0 && (
                 <Table.Row>
-                  <Table.Cell colSpan={5} px={4} py={8} textAlign="center">
+                  <Table.Cell colSpan={6} px={4} py={8} textAlign="center">
                     <Text color="fg.muted">
                       {filter === "all" ? "No tasks assigned yet." : `No ${filter.replace("_", " ")} tasks.`}
                     </Text>

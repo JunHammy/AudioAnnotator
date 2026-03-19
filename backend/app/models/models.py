@@ -83,6 +83,8 @@ class Assignment(Base):
     status = Column(String(30), nullable=False, default="pending")  # pending | in_progress | completed
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+    priority = Column(String(20), nullable=False, default="normal")
+    due_date = Column(DateTime(timezone=True), nullable=True)
 
     audio_file = relationship("AudioFile", back_populates="assignments")
     annotator = relationship("User", back_populates="assignments", foreign_keys=[annotator_id])
