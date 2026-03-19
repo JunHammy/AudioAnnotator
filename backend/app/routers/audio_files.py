@@ -18,7 +18,7 @@ from app.models.models import (
     Assignment, AudioFile, Dataset, FinalAnnotation, OriginalJSONStore,
     SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
 )
-from app.schemas.schemas import AudioFileMetadataUpdate, AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
+from app.schemas.schemas import AudioFileAdminResponseUpdate, AudioFileMetadataUpdate, AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
 from app.services.audit import write_audit_log
 
 router = APIRouter()
@@ -475,6 +475,34 @@ async def update_remarks(
             raise HTTPException(status_code=403, detail="Not assigned to this file")
 
     af.annotator_remarks = body.annotator_remarks
+    await db.flush()
+    await db.refresh(af)
+    return af
+
+
+@router.patch("/{file_id}/admin-response", response_model=AudioFileResponse)
+async def update_admin_response(
+    file_id: int,
+    body: AudioFileAdminResponseUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Admin-only: write or clear a response to the annotator's remarks for a file."""
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    af.admin_response = body.admin_response or None
+    await write_audit_log(
+        db, _admin.id, "admin_response",
+        resource_type="audio_file", resource_id=file_id,
+        details={"filename": af.filename, "cleared": af.admin_response is None},
+    )
     await db.flush()
     await db.refresh(af)
     return af

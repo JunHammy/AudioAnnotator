@@ -65,10 +65,11 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 export default function AnnotatorTasksPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [assignments,  setAssignments]  = useState<Assignment[]>([]);
-  const [filenameMap,  setFilenameMap]  = useState<Record<number, string>>({});
-  const [loading,      setLoading]      = useState(true);
-  const [filter,       setFilter]       = useState<"all" | "pending" | "in_progress" | "completed">("all");
+  const [assignments,    setAssignments]    = useState<Assignment[]>([]);
+  const [filenameMap,    setFilenameMap]    = useState<Record<number, string>>({});
+  const [adminResponseMap, setAdminResponseMap] = useState<Record<number, string | null>>({});
+  const [loading,        setLoading]        = useState(true);
+  const [filter,         setFilter]         = useState<"all" | "pending" | "in_progress" | "completed">("all");
 
   useEffect(() => {
     Promise.all([
@@ -76,9 +77,14 @@ export default function AnnotatorTasksPage() {
       api.get("/api/audio-files"),
     ]).then(([aRes, fRes]) => {
       setAssignments(aRes.data);
-      const map: Record<number, string> = {};
-      for (const f of fRes.data) map[f.id] = f.filename;
-      setFilenameMap(map);
+      const nameMap: Record<number, string> = {};
+      const respMap: Record<number, string | null> = {};
+      for (const f of fRes.data) {
+        nameMap[f.id] = f.filename;
+        respMap[f.id] = f.admin_response ?? null;
+      }
+      setFilenameMap(nameMap);
+      setAdminResponseMap(respMap);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -163,6 +169,11 @@ export default function AnnotatorTasksPage() {
                       <Text fontSize="sm" color="fg" fontFamily="mono">
                         {filenameMap[fileId] ?? `file_${fileId}`}
                       </Text>
+                      {adminResponseMap[fileId] && (
+                        <Badge size="xs" colorPalette="blue" variant="subtle" mt={1}>
+                          💬 Admin replied
+                        </Badge>
+                      )}
                     </Table.Cell>
                     <Table.Cell px={4} py={3}>
                       <Flex gap={1} wrap="wrap">

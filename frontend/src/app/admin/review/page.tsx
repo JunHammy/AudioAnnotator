@@ -15,6 +15,7 @@ import {
   Table,
   Tabs,
   Text,
+  Textarea,
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
@@ -25,6 +26,8 @@ import {
   Clock,
   Download,
   Lock,
+  MessageSquare,
+  Send,
   Unlock,
 } from "lucide-react"
 import api, { downloadExport } from "@/lib/axios"
@@ -44,6 +47,7 @@ interface ReviewFile {
   collaborative_locked_gender: boolean
   collaborative_locked_transcription: boolean
   annotator_remarks: string | null
+  admin_response: string | null
 }
 
 interface AnnotatorVote {
@@ -583,6 +587,8 @@ export default function ReviewFinalizePage() {
   const [files, setFiles] = useState<ReviewFile[]>([])
   const [loadingFiles, setLoadingFiles] = useState(true)
   const [selectedFile, setSelectedFile] = useState<ReviewFile | null>(null)
+  const [responseText, setResponseText] = useState("")
+  const [savingResponse, setSavingResponse] = useState(false)
 
   const loadFiles = useCallback(async () => {
     try {
@@ -596,6 +602,29 @@ export default function ReviewFinalizePage() {
   }, [])
 
   useEffect(() => { loadFiles() }, [loadFiles])
+
+  // Sync response textarea when selected file changes
+  useEffect(() => {
+    setResponseText(selectedFile?.admin_response ?? "")
+  }, [selectedFile?.id])
+
+  const saveAdminResponse = async () => {
+    if (!selectedFile) return
+    setSavingResponse(true)
+    try {
+      const res = await api.patch(`/api/audio-files/${selectedFile.id}/admin-response`, {
+        admin_response: responseText.trim() || null,
+      })
+      const updated: ReviewFile = { ...selectedFile, admin_response: res.data.admin_response }
+      setSelectedFile(updated)
+      setFiles(prev => prev.map(f => f.id === updated.id ? { ...f, admin_response: updated.admin_response } : f))
+      ToastWizard.standard("success", "Response saved")
+    } catch {
+      ToastWizard.standard("error", "Failed to save response")
+    } finally {
+      setSavingResponse(false)
+    }
+  }
 
   const handleLockToggle = async (taskType: "speaker" | "gender" | "transcription") => {
     await loadFiles()
@@ -747,10 +776,51 @@ export default function ReviewFinalizePage() {
               </HStack>
             </HStack>
 
+            {/* Remarks & response panel — only shown when annotator has written something */}
             {selectedFile.annotator_remarks && (
-              <Box w="full" bg="orange.900" borderWidth="1px" borderColor="orange.700" rounded="md" px={3} py={2}>
-                <Text fontSize="xs" fontWeight="semibold" color="orange.300" mb={1}>Annotator Remarks</Text>
-                <Text fontSize="sm" color="orange.100" whiteSpace="pre-wrap">{selectedFile.annotator_remarks}</Text>
+              <Box w="full" borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">
+                {/* Annotator remark */}
+                <Box bg="orange.900" borderBottomWidth="1px" borderColor="orange.800" px={3} py={2}>
+                  <HStack gap={2} mb={1}>
+                    <MessageSquare size={12} color="var(--chakra-colors-orange-300)" />
+                    <Text fontSize="xs" fontWeight="semibold" color="orange.300">Annotator Remarks</Text>
+                  </HStack>
+                  <Text fontSize="sm" color="orange.100" whiteSpace="pre-wrap">{selectedFile.annotator_remarks}</Text>
+                </Box>
+                {/* Admin response */}
+                <Box bg="bg.subtle" px={3} py={2}>
+                  <HStack gap={2} mb={2}>
+                    <Send size={12} color="var(--chakra-colors-blue-400)" />
+                    <Text fontSize="xs" fontWeight="semibold" color="blue.400">Admin Response</Text>
+                    {selectedFile.admin_response && (
+                      <Badge size="xs" colorPalette="green">Responded</Badge>
+                    )}
+                  </HStack>
+                  <Textarea
+                    size="sm" rows={3}
+                    bg="bg.muted" borderColor="border" color="fg" fontSize="sm"
+                    placeholder="Write a response visible to the annotator…"
+                    value={responseText}
+                    onChange={e => setResponseText(e.target.value)}
+                  />
+                  <HStack mt={2} justify="flex-end" gap={2}>
+                    {selectedFile.admin_response && (
+                      <Button
+                        size="xs" variant="ghost" color="fg.muted"
+                        onClick={() => { setResponseText(""); saveAdminResponse() }}
+                      >
+                        Clear response
+                      </Button>
+                    )}
+                    <Button
+                      size="xs" colorPalette="blue" loading={savingResponse}
+                      disabled={responseText.trim() === (selectedFile.admin_response ?? "")}
+                      onClick={saveAdminResponse}
+                    >
+                      <Send size={11} /> Save response
+                    </Button>
+                  </HStack>
+                </Box>
               </Box>
             )}
 

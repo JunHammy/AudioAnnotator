@@ -53,6 +53,7 @@ interface AnnotateData {
     language: string | null
     emotion_gated: boolean
     annotator_remarks: string | null
+    admin_response: string | null
   }
   speaker_segments: Segment[]
   emotion_segments: Segment[]
@@ -1634,28 +1635,41 @@ function AnnotateInner() {
             ))}
           </HStack>
 
-          {/* Annotator remarks */}
-          <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" p={3}>
-            <HStack mb={2} justify="space-between" align="center">
-              <Text fontSize="xs" fontWeight="semibold" color="fg">Remarks for admin</Text>
-              <Button size="xs" colorPalette="blue" variant="outline" loading={remarksSaving} onClick={saveRemarks}>
-                <Save size={11} /> Save
-              </Button>
-            </HStack>
-            <Textarea
-              value={remarks}
-              onChange={e => setRemarks(e.target.value)}
-              placeholder="e.g. Language sounds like Mandarin, please update language field. Background noise from 2:30–3:10."
-              rows={4}
-              fontSize="xs"
-              bg="bg.muted"
-              borderColor="border"
-              color="fg"
-              resize="vertical"
-            />
-            <Text fontSize="10px" color="fg.subtle" mt={1}>
-              Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
-            </Text>
+          {/* Remarks + admin response */}
+          <Box borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">
+            {/* Admin response — shown prominently when present */}
+            {data.audio_file.admin_response && (
+              <Box bg="blue.900" borderBottomWidth="1px" borderColor="blue.800" px={3} py={2}>
+                <HStack gap={2} mb={1}>
+                  <Text fontSize="xs" fontWeight="semibold" color="blue.300">Admin Response</Text>
+                  <Badge size="xs" colorPalette="blue">New</Badge>
+                </HStack>
+                <Text fontSize="sm" color="blue.100" whiteSpace="pre-wrap">{data.audio_file.admin_response}</Text>
+              </Box>
+            )}
+            {/* Annotator remarks */}
+            <Box bg="bg.subtle" p={3}>
+              <HStack mb={2} justify="space-between" align="center">
+                <Text fontSize="xs" fontWeight="semibold" color="fg">Remarks for admin</Text>
+                <Button size="xs" colorPalette="blue" variant="outline" loading={remarksSaving} onClick={saveRemarks}>
+                  <Save size={11} /> Save
+                </Button>
+              </HStack>
+              <Textarea
+                value={remarks}
+                onChange={e => setRemarks(e.target.value)}
+                placeholder="e.g. Language sounds like Mandarin, please update language field."
+                rows={3}
+                fontSize="xs"
+                bg="bg.muted"
+                borderColor="border"
+                color="fg"
+                resize="vertical"
+              />
+              <Text fontSize="10px" color="fg.subtle" mt={1}>
+                Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
+              </Text>
+            </Box>
           </Box>
           </Box> {/* end scrollable bottom */}
         </Box> {/* end flex column */}

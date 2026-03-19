@@ -176,6 +176,7 @@ class AudioFileResponse(BaseModel):
     locked_by: Optional[int]
     locked_at: Optional[datetime]
     annotator_remarks: Optional[str]
+    admin_response: Optional[str]
     created_at: datetime
     json_types: list[str] = []
     # file_path intentionally omitted — don't expose server filesystem paths to clients
@@ -218,6 +219,10 @@ class AudioFileMetadataUpdate(BaseModel):
 
 class AudioFileRemarksUpdate(BaseModel):
     annotator_remarks: Optional[str] = None
+
+
+class AudioFileAdminResponseUpdate(BaseModel):
+    admin_response: Optional[str] = None
 
 
 class AudioFileLockUpdate(BaseModel):
