@@ -28,6 +28,7 @@ import {
   Download,
   FileAudio2,
   Lock,
+  Pencil,
   RefreshCw,
   Search,
   Trash2,
@@ -590,6 +591,11 @@ export default function ManageFilesPage() {
                   onToggleLock={toggleLock}
                   onNavigate={router.push}
                   onDelete={setDeleteTarget}
+                  onMetadataUpdate={(fileId, language, numSpeakers) => {
+                    setFiles(prev => prev.map(f =>
+                      f.id === fileId ? { ...f, language, num_speakers: numSpeakers } : f
+                    ))
+                  }}
                 />
               ))}
             </Table.Body>
@@ -660,6 +666,8 @@ export default function ManageFilesPage() {
 
 // ─── Table Row (extracted to avoid re-renders of the full list) ───────────────
 
+const LANGUAGE_PRESETS = ["English", "Malay", "Chinese", "Tamil", "Mixed"]
+
 function FileTableRow({
   row,
   datasetMap,
@@ -667,6 +675,7 @@ function FileTableRow({
   onToggleLock,
   onNavigate,
   onDelete,
+  onMetadataUpdate,
 }: {
   row: FileRow
   datasetMap: Map<number, string>
@@ -674,9 +683,39 @@ function FileTableRow({
   onToggleLock: (fileId: number, taskType: string, locked: boolean) => void
   onNavigate: (href: string) => void
   onDelete: (file: AudioFile) => void
+  onMetadataUpdate: (fileId: number, language: string | null, numSpeakers: number | null) => void
 }) {
   const { file, stage, taskSummary } = row
   const stageMeta = STAGE_META[stage]
+  const [editOpen, setEditOpen] = useState(false)
+  const [editLang, setEditLang] = useState(file.language ?? "")
+  const [editSpk, setEditSpk] = useState(String(file.num_speakers ?? ""))
+  const [saving, setSaving] = useState(false)
+
+  const openEdit = () => {
+    setEditLang(file.language ?? "")
+    setEditSpk(String(file.num_speakers ?? ""))
+    setEditOpen(true)
+  }
+
+  const saveEdit = async () => {
+    setSaving(true)
+    try {
+      const body: Record<string, unknown> = {}
+      const lang = editLang.trim() || null
+      const spk = editSpk.trim() ? parseInt(editSpk, 10) : null
+      if (lang !== (file.language ?? null)) body.language = lang
+      if (spk !== (file.num_speakers ?? null)) body.num_speakers = spk
+      if (Object.keys(body).length === 0) { setEditOpen(false); return }
+      await api.patch(`/api/audio-files/${file.id}/metadata`, body)
+      onMetadataUpdate(file.id, lang, spk)
+      setEditOpen(false)
+    } catch {
+      // let parent show error if needed; keep modal open
+    } finally {
+      setSaving(false)
+    }
+  }
 
   // Total annotators across all tasks
   const totalAnnotators = Object.values(taskSummary).reduce((s, t) => s + t.total, 0)
@@ -712,19 +751,81 @@ function FileTableRow({
 
       {/* Info */}
       <Table.Cell px={4} py={3}>
-        <VStack align="flex-start" gap={1}>
-          {file.language && (
-            <Badge size="xs" colorPalette="blue" variant="subtle">{file.language}</Badge>
-          )}
-          <Text fontSize="xs" color="fg.muted" fontFamily="mono">
-            {fmtDuration(file.duration)}
-          </Text>
-          {file.num_speakers != null && (
+        <HStack gap={1} align="flex-start">
+          <VStack align="flex-start" gap={1}>
+            {file.language
+              ? <Badge size="xs" colorPalette="blue" variant="subtle">{file.language}</Badge>
+              : <Badge size="xs" colorPalette="gray" variant="subtle">no language</Badge>
+            }
+            <Text fontSize="xs" color="fg.muted" fontFamily="mono">{fmtDuration(file.duration)}</Text>
             <Text fontSize="xs" color="fg.muted">
-              {file.num_speakers} spk
+              {file.num_speakers != null ? `${file.num_speakers} spk` : "? spk"}
             </Text>
-          )}
-        </VStack>
+          </VStack>
+          <IconButton
+            aria-label="Edit metadata" size="2xs" variant="ghost" color="fg.muted"
+            onClick={openEdit} title="Edit language / speakers"
+          >
+            <Pencil size={11} />
+          </IconButton>
+        </HStack>
+
+        {/* Edit metadata modal */}
+        <Dialog.Root open={editOpen} onOpenChange={({ open }) => setEditOpen(open)}>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="340px" w="full">
+              <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+                <Dialog.Title fontSize="sm" color="fg">Edit file metadata</Dialog.Title>
+                <Text fontSize="xs" color="fg.muted" mt={0.5} fontFamily="mono">{file.filename}</Text>
+              </Dialog.Header>
+              <Dialog.Body pt={4}>
+                <VStack gap={4} align="stretch">
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Language</Text>
+                    <Input
+                      size="sm" bg="bg.muted" borderColor="border" color="fg"
+                      placeholder="e.g. English, Mixed…"
+                      value={editLang}
+                      onChange={e => setEditLang(e.target.value)}
+                      mb={2}
+                    />
+                    <Flex gap={1} flexWrap="wrap">
+                      {LANGUAGE_PRESETS.map(l => (
+                        <button
+                          key={l} type="button"
+                          onClick={() => setEditLang(l)}
+                          style={{
+                            padding: "1px 8px", fontSize: "12px", borderRadius: "9999px",
+                            border: `1px solid ${editLang === l ? "var(--chakra-colors-blue-400)" : "var(--chakra-colors-border)"}`,
+                            background: editLang === l ? "var(--chakra-colors-blue-900)" : "var(--chakra-colors-bg-muted)",
+                            color: editLang === l ? "var(--chakra-colors-blue-300)" : "var(--chakra-colors-fg-muted)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {l}
+                        </button>
+                      ))}
+                    </Flex>
+                  </Box>
+                  <Box>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Number of speakers</Text>
+                    <Input
+                      size="sm" type="number" min={1} bg="bg.muted" borderColor="border" color="fg"
+                      placeholder="e.g. 2"
+                      value={editSpk}
+                      onChange={e => setEditSpk(e.target.value)}
+                    />
+                  </Box>
+                </VStack>
+              </Dialog.Body>
+              <Dialog.Footer borderTopWidth="1px" borderColor="border" pt={3} gap={2}>
+                <Button size="sm" variant="ghost" onClick={() => setEditOpen(false)}>Cancel</Button>
+                <Button size="sm" colorPalette="blue" loading={saving} onClick={saveEdit}>Save</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Dialog.Root>
       </Table.Cell>
 
       {/* Task Progress */}

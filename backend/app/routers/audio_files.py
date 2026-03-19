@@ -18,7 +18,7 @@ from app.models.models import (
     Assignment, AudioFile, Dataset, FinalAnnotation, OriginalJSONStore,
     SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User,
 )
-from app.schemas.schemas import AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
+from app.schemas.schemas import AudioFileMetadataUpdate, AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
 from app.services.audit import write_audit_log
 
 router = APIRouter()
@@ -477,6 +477,43 @@ async def update_remarks(
     af.annotator_remarks = body.annotator_remarks
     await db.flush()
     await db.refresh(af)
+    return af
+
+
+@router.patch("/{file_id}/metadata", response_model=AudioFileResponse)
+async def update_file_metadata(
+    file_id: int,
+    body: AudioFileMetadataUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Update editable metadata (language, num_speakers) for an uploaded audio file."""
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+
+    changed: dict = {}
+    if body.language is not None and body.language != af.language:
+        changed["language"] = {"from": af.language, "to": body.language}
+        af.language = body.language
+    if body.num_speakers is not None and body.num_speakers != af.num_speakers:
+        changed["num_speakers"] = {"from": af.num_speakers, "to": body.num_speakers}
+        af.num_speakers = body.num_speakers
+
+    if changed:
+        await write_audit_log(
+            db, _admin.id, "update_file_metadata",
+            resource_type="audio_file", resource_id=file_id,
+            details={"filename": af.filename, "changes": changed},
+        )
+        await db.flush()
+        await db.refresh(af)
+
     return af
 
 

@@ -195,6 +195,27 @@ class AudioFileResponse(BaseModel):
         return data
 
 
+class AudioFileMetadataUpdate(BaseModel):
+    language: Optional[str] = None
+    num_speakers: Optional[int] = None
+
+    @field_validator("num_speakers")
+    @classmethod
+    def positive_speakers(cls, v):
+        if v is not None and v < 1:
+            raise ValueError("num_speakers must be at least 1")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def clean_language(cls, v):
+        if v is not None:
+            v = v.strip()
+            if len(v) > 50:
+                raise ValueError("language must be 50 characters or fewer")
+        return v or None
+
+
 class AudioFileRemarksUpdate(BaseModel):
     annotator_remarks: Optional[str] = None
 
