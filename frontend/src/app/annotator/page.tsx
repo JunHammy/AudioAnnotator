@@ -26,6 +26,12 @@ interface Assignment {
   completed_at: string | null;
 }
 
+interface EmotionProgress {
+  file_id: number;
+  annotated: number;
+  total: number;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function statusBadge(status: string) {
@@ -68,6 +74,7 @@ export default function AnnotatorTasksPage() {
   const [assignments,    setAssignments]    = useState<Assignment[]>([]);
   const [filenameMap,    setFilenameMap]    = useState<Record<number, string>>({});
   const [adminResponseMap, setAdminResponseMap] = useState<Record<number, string | null>>({});
+  const [emotionProgress, setEmotionProgress] = useState<Record<number, EmotionProgress>>({});
   const [loading,        setLoading]        = useState(true);
   const [filter,         setFilter]         = useState<"all" | "pending" | "in_progress" | "completed">("all");
 
@@ -75,7 +82,8 @@ export default function AnnotatorTasksPage() {
     Promise.all([
       api.get("/api/assignments/"),
       api.get("/api/audio-files"),
-    ]).then(([aRes, fRes]) => {
+      api.get("/api/segments/emotion-progress"),
+    ]).then(([aRes, fRes, epRes]) => {
       setAssignments(aRes.data);
       const nameMap: Record<number, string> = {};
       const respMap: Record<number, string | null> = {};
@@ -85,6 +93,9 @@ export default function AnnotatorTasksPage() {
       }
       setFilenameMap(nameMap);
       setAdminResponseMap(respMap);
+      const progMap: Record<number, EmotionProgress> = {};
+      for (const p of epRes.data) progMap[p.file_id] = p;
+      setEmotionProgress(progMap);
     }).finally(() => setLoading(false));
   }, []);
 
@@ -176,13 +187,18 @@ export default function AnnotatorTasksPage() {
                       )}
                     </Table.Cell>
                     <Table.Cell px={4} py={3}>
-                      <Flex gap={1} wrap="wrap">
+                      <Flex gap={1} wrap="wrap" mb={tasks.some(t => t.task_type === "emotion") && emotionProgress[fileId] ? 1 : 0}>
                         {tasks.map((t) => (
                           <Badge key={t.id} colorPalette="blue" size="sm" variant="outline">
                             {t.task_type}
                           </Badge>
                         ))}
                       </Flex>
+                      {tasks.some(t => t.task_type === "emotion") && emotionProgress[fileId] && (
+                        <Text fontSize="10px" color="fg.muted">
+                          {emotionProgress[fileId].annotated} / {emotionProgress[fileId].total} segments labelled
+                        </Text>
+                      )}
                     </Table.Cell>
                     <Table.Cell px={4} py={3}>{statusBadge(overallStatus)}</Table.Cell>
                     <Table.Cell px={4} py={3}>

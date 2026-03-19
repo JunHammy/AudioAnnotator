@@ -2,7 +2,7 @@ from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import Integer, select, func
 
 from app.auth.dependencies import get_current_user
 from app.database import get_db
@@ -486,3 +486,32 @@ async def get_annotate_data(
             for a in my_assignments
         ],
     }
+
+
+@router.get("/emotion-progress")
+async def emotion_progress(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns per-file emotion annotation progress for the current annotator.
+    Only includes files where they have an emotion assignment.
+    Response: [{file_id, annotated, total}]
+    """
+    rows = (await db.execute(
+        select(
+            SpeakerSegment.audio_file_id,
+            func.count(SpeakerSegment.id).label("total"),
+            func.sum(
+                func.cast(SpeakerSegment.emotion.isnot(None), Integer)
+            ).label("annotated"),
+        )
+        .where(SpeakerSegment.annotator_id == current_user.id)
+        .where(SpeakerSegment.source == "annotator")
+        .group_by(SpeakerSegment.audio_file_id)
+    )).all()
+
+    return [
+        {"file_id": r.audio_file_id, "annotated": int(r.annotated or 0), "total": r.total}
+        for r in rows
+    ]
