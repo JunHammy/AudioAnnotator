@@ -19,7 +19,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Calendar, Lock, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Archive, Calendar, Lock, Pause, Play, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -34,6 +34,7 @@ interface AudioFile {
   collaborative_locked_speaker: boolean;
   collaborative_locked_gender: boolean;
   collaborative_locked_transcription: boolean;
+  is_deleted: boolean;
 }
 
 interface User {
@@ -86,7 +87,6 @@ function priorityBadge(priority: string) {
 }
 
 const PRIORITY_OPTIONS = ["low", "normal", "high"] as const;
-type Priority = typeof PRIORITY_OPTIONS[number];
 
 const priorityCollection = createListCollection({
   items: PRIORITY_OPTIONS.map(p => ({ label: p.charAt(0).toUpperCase() + p.slice(1), value: p })),
@@ -127,6 +127,14 @@ export default function AssignTasksPage() {
   const [editDueDate,    setEditDueDate]    = useState<string>("");
   const [savingMeta,     setSavingMeta]     = useState(false);
 
+  // Audio preview state
+  const [playingFileId,  setPlayingFileId]  = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Archive state
+  const [archiving,      setArchiving]      = useState<Set<number>>(new Set());
+  const [showArchived,   setShowArchived]   = useState(false);
+
   // Bulk assignment modal state
   const [bulkOpen,          setBulkOpen]          = useState(false);
   const [bulkSearch,        setBulkSearch]        = useState("");
@@ -138,14 +146,17 @@ export default function AssignTasksPage() {
   const bulkAbort = useRef(false);
 
   useEffect(() => {
-    Promise.all([api.get("/api/audio-files/"), api.get("/api/users/")])
+    Promise.all([
+      api.get(`/api/audio-files/?include_deleted=${showArchived}`),
+      api.get("/api/users/"),
+    ])
       .then(([af, u]) => {
         setAudioFiles(af.data);
         setUsers(u.data);
         if (af.data.length > 0) setSelectedFile(af.data[0]);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [showArchived]);
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -281,6 +292,48 @@ export default function AssignTasksPage() {
     }
   }
 
+  function togglePreview(fileId: number) {
+    if (playingFileId === fileId) {
+      audioRef.current?.pause();
+      audioRef.current = null;
+      setPlayingFileId(null);
+    } else {
+      audioRef.current?.pause();
+      const a = new Audio(`/api/audio-files/${fileId}/stream`);
+      a.play().catch(() => {});
+      a.onended = () => setPlayingFileId(null);
+      audioRef.current = a;
+      setPlayingFileId(fileId);
+    }
+  }
+
+  async function archiveFile(fileId: number) {
+    setArchiving(prev => new Set(prev).add(fileId));
+    try {
+      await api.delete(`/api/audio-files/${fileId}`);
+      setAudioFiles(prev => prev.filter(f => f.id !== fileId));
+      if (selectedFile?.id === fileId) setSelectedFile(null);
+      ToastWizard.standard("success", "File archived", "File hidden from all lists.", 3000, true);
+    } catch {
+      ToastWizard.standard("error", "Archive failed", "Could not archive file.", 3000, true);
+    } finally {
+      setArchiving(prev => { const s = new Set(prev); s.delete(fileId); return s; });
+    }
+  }
+
+  async function restoreFile(fileId: number) {
+    setArchiving(prev => new Set(prev).add(fileId));
+    try {
+      const res = await api.patch(`/api/audio-files/${fileId}/restore`);
+      setAudioFiles(prev => prev.map(f => f.id === fileId ? { ...f, is_deleted: false } : f));
+      ToastWizard.standard("success", "File restored", res.data.filename, 3000, true);
+    } catch {
+      ToastWizard.standard("error", "Restore failed", "Could not restore file.", 3000, true);
+    } finally {
+      setArchiving(prev => { const s = new Set(prev); s.delete(fileId); return s; });
+    }
+  }
+
   async function saveMetaForAnnotator(annotatorId: number) {
     if (!editPriority[0]) return;
     const rows = assignments.filter(a => a.annotator_id === annotatorId);
@@ -346,10 +399,21 @@ export default function AssignTasksPage() {
     <Box p={8} h="full">
       <HStack mb={1} justify="space-between" align="flex-start">
         <Heading size="lg" color="fg">Assign Tasks</Heading>
-        <Button size="sm" colorPalette="teal" variant="outline" onClick={() => { resetBulk(); setBulkOpen(true); }}>
-          <Users size={14} />
-          Bulk Assign
-        </Button>
+        <HStack gap={2}>
+          <Button
+            size="sm"
+            variant={showArchived ? "solid" : "outline"}
+            colorPalette={showArchived ? "orange" : "gray"}
+            onClick={() => setShowArchived(v => !v)}
+          >
+            <Archive size={14} />
+            {showArchived ? "Hide Archived" : "Show Archived"}
+          </Button>
+          <Button size="sm" colorPalette="teal" variant="outline" onClick={() => { resetBulk(); setBulkOpen(true); }}>
+            <Users size={14} />
+            Bulk Assign
+          </Button>
+        </HStack>
       </HStack>
       <Text color="fg.muted" mb={6}>Select a file to manage its annotator assignments</Text>
 
@@ -391,21 +455,64 @@ export default function AssignTasksPage() {
                     cursor="pointer"
                     bg={isSelected ? "bg.muted" : "transparent"}
                     borderLeftWidth="3px"
-                    borderLeftColor={isSelected ? "blue.400" : "transparent"}
+                    borderLeftColor={isSelected ? (af.is_deleted ? "orange.400" : "blue.400") : "transparent"}
                     _hover={{ bg: "bg.muted" }}
                     onClick={() => setSelectedFile(af)}
                     borderBottomWidth="1px"
                     borderBottomColor="border"
+                    opacity={af.is_deleted ? 0.55 : 1}
                   >
-                    <Text fontSize="sm" color="fg" fontFamily="mono" mb={0.5}>
-                      {af.filename.replace(/\.[^.]+$/, "")}
-                    </Text>
+                    <Flex justify="space-between" align="flex-start" mb={0.5}>
+                      <Text fontSize="sm" color="fg" fontFamily="mono" flex={1} mr={1}>
+                        {af.filename.replace(/\.[^.]+$/, "")}
+                      </Text>
+                      <HStack gap={0.5} flexShrink={0} onClick={e => e.stopPropagation()}>
+                        {!af.is_deleted && (
+                          <IconButton
+                            aria-label="Preview audio"
+                            size="2xs"
+                            variant="ghost"
+                            color={playingFileId === af.id ? "blue.400" : "fg.muted"}
+                            onClick={() => togglePreview(af.id)}
+                            title="Preview audio"
+                          >
+                            {playingFileId === af.id ? <Pause size={11} /> : <Play size={11} />}
+                          </IconButton>
+                        )}
+                        {af.is_deleted ? (
+                          <IconButton
+                            aria-label="Restore file"
+                            size="2xs"
+                            variant="ghost"
+                            color="orange.400"
+                            loading={archiving.has(af.id)}
+                            onClick={() => restoreFile(af.id)}
+                            title="Restore file"
+                          >
+                            <RotateCcw size={11} />
+                          </IconButton>
+                        ) : (
+                          <IconButton
+                            aria-label="Archive file"
+                            size="2xs"
+                            variant="ghost"
+                            color="fg.muted"
+                            loading={archiving.has(af.id)}
+                            onClick={() => archiveFile(af.id)}
+                            title="Archive file (soft delete)"
+                          >
+                            <Archive size={11} />
+                          </IconButton>
+                        )}
+                      </HStack>
+                    </Flex>
                     <Flex gap={3} align="center">
                       <Text fontSize="xs" color="fg.muted">{af.language ?? "—"}</Text>
                       <Text fontSize="xs" color="fg.muted">{af.num_speakers ?? "?"} spk</Text>
                       <Text fontSize="xs" color="fg.muted" fontFamily="mono">
                         {af.duration ? `${af.duration.toFixed(0)}s` : ""}
                       </Text>
+                      {af.is_deleted && <Badge colorPalette="orange" size="sm" variant="subtle">archived</Badge>}
                     </Flex>
                   </Box>
                 );

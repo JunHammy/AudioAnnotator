@@ -177,6 +177,7 @@ class AudioFileResponse(BaseModel):
     locked_at: Optional[datetime]
     annotator_remarks: Optional[str]
     admin_response: Optional[str]
+    is_deleted: bool = False
     created_at: datetime
     json_types: list[str] = []
     # file_path intentionally omitted — don't expose server filesystem paths to clients

@@ -76,14 +76,14 @@ def _best_overlap(seg_start: float, seg_end: float, windows: list) -> dict | Non
 
 @router.get("", response_model=list[AudioFileResponse])
 async def list_audio_files(
+    include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(AudioFile)
-        .options(selectinload(AudioFile.original_json_store))
-        .order_by(AudioFile.created_at.desc())
-    )
+    q = select(AudioFile).options(selectinload(AudioFile.original_json_store))
+    if not (include_deleted and current_user.role == "admin"):
+        q = q.where(AudioFile.is_deleted == False)
+    result = await db.execute(q.order_by(AudioFile.created_at.desc()))
     return result.scalars().all()
 
 
@@ -364,59 +364,59 @@ async def stream_audio(
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_audio_file(
+async def archive_audio_file(
     file_id: int,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    """Permanently delete an audio file and all linked data (segments, assignments, JSONs, disk file)."""
+    """Soft-delete (archive) an audio file. Data is preserved; file disappears from all lists."""
     result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
     af = result.scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
-
-    file_path = Path(af.file_path)
-
-    # Collect segment IDs so we can purge their edit history
-    spk_ids_res = await db.execute(select(SpeakerSegment.id).where(SpeakerSegment.audio_file_id == file_id))
-    spk_ids = [r[0] for r in spk_ids_res.fetchall()]
-
-    trn_ids_res = await db.execute(select(TranscriptionSegment.id).where(TranscriptionSegment.audio_file_id == file_id))
-    trn_ids = [r[0] for r in trn_ids_res.fetchall()]
-
-    # Delete edit history for segments
-    if spk_ids:
-        await db.execute(
-            sa_delete(SegmentEditHistory).where(
-                SegmentEditHistory.segment_type == "speaker",
-                SegmentEditHistory.segment_id.in_(spk_ids),
-            )
-        )
-    if trn_ids:
-        await db.execute(
-            sa_delete(SegmentEditHistory).where(
-                SegmentEditHistory.segment_type == "transcription",
-                SegmentEditHistory.segment_id.in_(trn_ids),
-            )
-        )
-
-    # Delete all related DB records
-    await db.execute(sa_delete(SpeakerSegment).where(SpeakerSegment.audio_file_id == file_id))
-    await db.execute(sa_delete(TranscriptionSegment).where(TranscriptionSegment.audio_file_id == file_id))
-    await db.execute(sa_delete(Assignment).where(Assignment.audio_file_id == file_id))
-    await db.execute(sa_delete(OriginalJSONStore).where(OriginalJSONStore.audio_file_id == file_id))
-    await db.execute(sa_delete(FinalAnnotation).where(FinalAnnotation.audio_file_id == file_id))
-    await db.execute(sa_delete(AudioFile).where(AudioFile.id == file_id))
-    await write_audit_log(db, admin.id, "delete_audio", "audio_file", file_id,
+    af.is_deleted = True
+    await write_audit_log(db, admin.id, "archive_audio", "audio_file", file_id,
                           {"filename": af.filename})
-    await db.commit()
+    await db.flush()
 
-    # Remove physical file from disk
-    try:
-        if file_path.is_file():
-            file_path.unlink()
-    except OSError:
-        pass  # Log-worthy but not fatal — DB record is already gone
+
+@router.patch("/{file_id}/restore", response_model=AudioFileResponse)
+async def restore_audio_file(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Restore a soft-deleted audio file."""
+    result = await db.execute(
+        select(AudioFile)
+        .options(selectinload(AudioFile.original_json_store))
+        .where(AudioFile.id == file_id)
+    )
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    af.is_deleted = False
+    await write_audit_log(db, admin.id, "restore_audio", "audio_file", file_id,
+                          {"filename": af.filename})
+    await db.flush()
+    await db.refresh(af)
+    return af
+
+
+@router.get("/{file_id}/annotator-count")
+async def get_annotator_count(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """Return the number of distinct annotators assigned to this file."""
+    result = await db.execute(
+        select(Assignment.annotator_id)
+        .where(Assignment.audio_file_id == file_id)
+        .distinct()
+    )
+    count = len(result.fetchall())
+    return {"count": count}
 
 
 @router.patch("/{file_id}/dataset", response_model=AudioFileResponse)

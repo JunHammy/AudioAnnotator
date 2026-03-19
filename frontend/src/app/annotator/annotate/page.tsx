@@ -19,6 +19,7 @@ import {
   Checkbox,
   Dialog,
   Field,
+  Flex,
   HStack,
   Heading,
   IconButton,
@@ -954,6 +955,7 @@ function AnnotateInner() {
   const [refreshing, setRefreshing] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [segmentFilter, setSegmentFilter] = useState<"all" | "unannotated" | "ambiguous" | "has_notes">("all")
+  const [annotatorCount, setAnnotatorCount] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     if (!fileId) return
@@ -961,6 +963,7 @@ function AnnotateInner() {
       const res = await api.get(`/api/segments/annotate/${fileId}`)
       setData(res.data)
       setRemarks(res.data.audio_file.annotator_remarks ?? "")
+      api.get(`/api/audio-files/${fileId}/annotator-count`).then(r => setAnnotatorCount(r.data.count)).catch(() => {})
       // Auto-start assignments that are still pending
       for (const a of res.data.assignments) {
         if (a.status === "pending") {
@@ -1599,6 +1602,11 @@ function AnnotateInner() {
               {data.audio_file.num_speakers && (
                 <Text fontSize="xs" color="fg.muted">{data.audio_file.num_speakers} spk</Text>
               )}
+              {annotatorCount !== null && annotatorCount > 1 && (
+                <Badge size="sm" colorPalette="teal" variant="subtle" title={`${annotatorCount} annotators assigned to this file`}>
+                  👥 {annotatorCount} annotators
+                </Badge>
+              )}
             </HStack>
           </Box>
           {hasCollaborativeTasks && (
@@ -1693,7 +1701,7 @@ function AnnotateInner() {
       <Box flex={1} display="flex" overflow="hidden">
         <Box flex={1} display="flex" flexDir="column" overflow="hidden">
 
-          {/* ── Sticky top: waveform + time ruler ── */}
+          {/* ── Sticky top: waveform + time ruler + color legend ── */}
           <Box px={4} pt={4} pb={2} bg="bg" borderBottomWidth="1px" borderColor="border" flexShrink={0}>
             <WaveformPlayer
               ref={playerRef}
@@ -1712,6 +1720,33 @@ function AnnotateInner() {
                 ))}
               </Box>
             )}
+            {/* Color legend */}
+            <HStack gap={4} mt={2} flexWrap="wrap">
+              {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (
+                <HStack gap={2} flexWrap="wrap">
+                  {Object.entries(SPEAKER_COLORS).map(([label, color]) => (
+                    <HStack key={label} gap={1}>
+                      <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
+                      <Text fontSize="9px" color="fg.muted">{label}</Text>
+                    </HStack>
+                  ))}
+                  <HStack gap={1}>
+                    <Box w="8px" h="8px" rounded="full" bg="#6b7280" flexShrink={0} />
+                    <Text fontSize="9px" color="fg.muted">unknown</Text>
+                  </HStack>
+                </HStack>
+              )}
+              {hasTask("emotion") && (
+                <HStack gap={2} flexWrap="wrap">
+                  {Object.entries(EMOTION_COLORS).map(([emo, color]) => (
+                    <HStack key={emo} gap={1}>
+                      <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
+                      <Text fontSize="9px" color="fg.muted">{emo}</Text>
+                    </HStack>
+                  ))}
+                </HStack>
+              )}
+            </HStack>
           </Box>
 
           {/* ── Scrollable bottom: speaker accordions + emotion + remarks ── */}

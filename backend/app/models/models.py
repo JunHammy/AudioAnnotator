@@ -59,6 +59,7 @@ class AudioFile(Base):
     locked_at = Column(DateTime(timezone=True), nullable=True)
     annotator_remarks = Column(Text, nullable=True)
     admin_response = Column(Text, nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False, server_default="0")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     uploader = relationship("User", back_populates="uploaded_files", foreign_keys=[uploaded_by])
