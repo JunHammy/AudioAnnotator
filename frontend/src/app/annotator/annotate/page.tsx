@@ -926,7 +926,7 @@ function AnnotateInner() {
   const editorRef = useRef<SegmentEditorRef>(null)
   const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const dataRef = useRef<AnnotateData | null>(null)
-  const segmentFilterRef = useRef(segmentFilter)
+  const segmentFilterRef = useRef<"all" | "unannotated" | "ambiguous" | "has_notes">("all")
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
   const [waveformReady, setWaveformReady] = useState(false)
