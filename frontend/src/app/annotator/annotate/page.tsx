@@ -310,6 +310,7 @@ interface SegmentEditorRef {
   save: () => void
   setEmotion: (e: string) => void
   toggleAmbiguous: () => void
+  updateTimes: (start: number, end: number) => void
 }
 
 const SegmentEditor = forwardRef<SegmentEditorRef, {
