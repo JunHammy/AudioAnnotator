@@ -360,6 +360,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   const [isAmbiguous, setIsAmbiguous] = useState<boolean>(
     (selection.segment as Segment).is_ambiguous ?? false
   )
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [history, setHistory] = useState<{ field_changed: string; old_value: string | null; new_value: string | null; username: string; edited_at: string }[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [alignedTo, setAlignedTo] = useState<Segment | null>(() => {
     if (selection.type !== "transcription" || !speakerSegments) return null
     const seg = selection.segment as TranscriptSegment
@@ -852,6 +855,61 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
             </Button>
           </HStack>
         )}
+
+        {/* Edit history */}
+        <Box borderTopWidth="1px" borderColor="border" pt={2}>
+          <Flex
+            as="button"
+            w="full"
+            align="center"
+            justify="space-between"
+            onClick={async () => {
+              const opening = !historyOpen
+              setHistoryOpen(opening)
+              if (opening && history.length === 0) {
+                setHistoryLoading(true)
+                try {
+                  const segType = type === "transcription" ? "transcription" : "speaker"
+                  const res = await api.get(`/api/segments/history/${segType}/${segment.id}`)
+                  setHistory(res.data)
+                } catch {} finally {
+                  setHistoryLoading(false)
+                }
+              }
+            }}
+            color="fg.muted"
+            _hover={{ color: "fg" }}
+          >
+            <Text fontSize="xs">Edit history</Text>
+            <Text fontSize="10px">{historyOpen ? "▲" : "▼"}</Text>
+          </Flex>
+          {historyOpen && (
+            <Box mt={2}>
+              {historyLoading ? (
+                <Text fontSize="xs" color="fg.muted">Loading…</Text>
+              ) : history.length === 0 ? (
+                <Text fontSize="xs" color="fg.muted" fontStyle="italic">No edits recorded.</Text>
+              ) : (
+                <VStack align="stretch" gap={1.5}>
+                  {history.map((h, i) => (
+                    <Box key={i} p={2} bg="bg.muted" rounded="sm" fontSize="10px">
+                      <HStack justify="space-between" mb={0.5}>
+                        <Text color="fg.muted">{h.username}</Text>
+                        <Text color="fg.subtle">{new Date(h.edited_at).toLocaleString()}</Text>
+                      </HStack>
+                      <Text color="fg">
+                        <Text as="span" fontWeight="medium">{h.field_changed}: </Text>
+                        <Text as="span" color="red.400" textDecoration="line-through">{h.old_value ?? "—"}</Text>
+                        {" → "}
+                        <Text as="span" color="green.400">{h.new_value ?? "—"}</Text>
+                      </Text>
+                    </Box>
+                  ))}
+                </VStack>
+              )}
+            </Box>
+          )}
+        </Box>
       </VStack>
     </Box>
   )

@@ -488,6 +488,38 @@ async def get_annotate_data(
     }
 
 
+@router.get("/history/{seg_type}/{seg_id}")
+async def get_segment_history(
+    seg_type: str,
+    seg_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns the edit history for a single segment.
+    Accessible to all authenticated users so annotators can see their own history.
+    """
+    from app.models.models import SegmentEditHistory
+    rows = (await db.execute(
+        select(SegmentEditHistory, User.username)
+        .join(User, SegmentEditHistory.edited_by == User.id)
+        .where(SegmentEditHistory.segment_type == seg_type)
+        .where(SegmentEditHistory.segment_id == seg_id)
+        .order_by(SegmentEditHistory.edited_at.desc())
+        .limit(20)
+    )).all()
+    return [
+        {
+            "field_changed": h.field_changed,
+            "old_value": h.old_value,
+            "new_value": h.new_value,
+            "username": username,
+            "edited_at": h.edited_at.isoformat(),
+        }
+        for h, username in rows
+    ]
+
+
 @router.get("/emotion-progress")
 async def emotion_progress(
     db: AsyncSession = Depends(get_db),
