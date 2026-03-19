@@ -188,11 +188,11 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       },
       activateRegion: (id: string) => {
         const entry = regionMapRef.current.get(id)
-        if (entry) entry.region.update({ drag: true, resize: true, color: "rgba(59,130,246,0.55)" })
+        if (entry) entry.region.setOptions({ drag: true, resize: true, color: "rgba(59,130,246,0.55)" })
       },
       deactivateRegion: (id: string) => {
         const entry = regionMapRef.current.get(id)
-        if (entry) entry.region.update({ drag: false, resize: false, color: entry.color })
+        if (entry) entry.region.setOptions({ drag: false, resize: false, color: entry.color })
       },
     }))
 
