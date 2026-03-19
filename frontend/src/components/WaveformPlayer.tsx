@@ -34,6 +34,7 @@ interface Props {
   audioUrl: string
   onTimeUpdate?: (t: number) => void
   onRegionUpdate?: (id: string, start: number, end: number) => void
+  onRangeSelect?: (start: number, end: number) => void
   onReady?: (duration: number) => void
   height?: number
 }
@@ -50,11 +51,12 @@ function fmtTime(t: number): string {
 }
 
 const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
-  ({ audioUrl, onTimeUpdate, onRegionUpdate, onReady, height = 80 }, ref) => {
+  ({ audioUrl, onTimeUpdate, onRegionUpdate, onRangeSelect, onReady, height = 80 }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null)
     const wsRef = useRef<any>(null)
     const regionsRef = useRef<any>(null)
     const onRegionUpdateRef = useRef(onRegionUpdate)
+    const onRangeSelectRef = useRef(onRangeSelect)
     const [playing, setPlaying] = useState(false)
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
@@ -64,6 +66,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     const [zoom, setZoomState] = useState(ZOOM_MIN)
 
     useEffect(() => { onRegionUpdateRef.current = onRegionUpdate }, [onRegionUpdate])
+    useEffect(() => { onRangeSelectRef.current = onRangeSelect }, [onRangeSelect])
 
     useEffect(() => {
       if (!containerRef.current) return
@@ -131,6 +134,16 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
 
         regions.on("region-updated", (region: any) => {
           onRegionUpdateRef.current?.(region.id, region.start, region.end)
+        })
+
+        // Drag on empty waveform space to select a time range (fires onRangeSelect,
+        // then removes the temporary region so it doesn't litter the display).
+        regions.enableDragSelection({ color: "rgba(59,130,246,0.15)" })
+        regions.on("region-created", (region: any) => {
+          if (onRangeSelectRef.current) {
+            onRangeSelectRef.current(region.start, region.end)
+          }
+          region.remove()
         })
       }
 

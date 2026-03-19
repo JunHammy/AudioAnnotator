@@ -1256,6 +1256,12 @@ function AnnotateInner() {
     setSegmentModal({ open: true, speaker: speakerLabels[0] ?? "", start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)) })
   }
 
+  // Waveform drag-to-select: pre-fill the Add Segment modal with the dragged range
+  const handleRangeSelect = useCallback((start: number, end: number) => {
+    if (!isSpeakerAnnotator) return
+    setSegmentModal({ open: true, speaker: speakerLabels[0] ?? "", start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)) })
+  }, [isSpeakerAnnotator, speakerLabels])
+
   // Undo — pop the stack and re-PATCH with previous values
   const undo = async () => {
     if (undoStack.current.length === 0) return
@@ -1721,6 +1727,7 @@ function AnnotateInner() {
               onTimeUpdate={setCurrentTime}
               onReady={(dur) => { setWaveformReady(true); setWaveformDuration(dur) }}
               onRegionUpdate={isSpeakerAnnotator ? handleRegionUpdate : undefined}
+              onRangeSelect={isSpeakerAnnotator ? handleRangeSelect : undefined}
               height={80}
             />
             {duration > 0 && (
