@@ -20,6 +20,7 @@ from app.models.models import (
 )
 from app.schemas.schemas import AudioFileAdminResponseUpdate, AudioFileMetadataUpdate, AudioFileResponse, AudioFileLockUpdate, AudioFileRemarksUpdate
 from app.services.audit import write_audit_log
+from app.services.notifications import create_notification
 
 router = APIRouter()
 
@@ -503,6 +504,23 @@ async def update_admin_response(
         resource_type="audio_file", resource_id=file_id,
         details={"filename": af.filename, "cleared": af.admin_response is None},
     )
+
+    # Notify all annotators assigned to this file when a response is written
+    if af.admin_response:
+        annotator_ids = (await db.execute(
+            select(Assignment.annotator_id)
+            .where(Assignment.audio_file_id == file_id)
+            .distinct()
+        )).scalars().all()
+        for uid in annotator_ids:
+            await create_notification(
+                db,
+                user_id=uid,
+                notif_type="admin_response",
+                message=f"Admin responded to your remarks on {af.filename}",
+                audio_file_id=file_id,
+            )
+
     await db.flush()
     await db.refresh(af)
     return af

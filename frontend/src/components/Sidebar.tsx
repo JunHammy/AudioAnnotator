@@ -21,6 +21,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import ToastWizard from "@/lib/toastWizard";
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface NavItem {
   label: string;
@@ -132,6 +133,9 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
 
       {/* Nav items */}
       <VStack gap={1} align="stretch" px={collapsed ? "6px" : 3} py={4} flex={1}>
+        {role === "annotator" && (
+          <NotificationBell collapsed={collapsed} />
+        )}
         {nav.map((item) => {
           const isActive =
             item.href === "/admin" || item.href === "/annotator"

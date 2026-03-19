@@ -189,3 +189,17 @@ class AuditLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     user = relationship("User")
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    type = Column(String(50), nullable=False)   # "assignment" | "admin_response"
+    message = Column(Text, nullable=False)
+    audio_file_id = Column(Integer, ForeignKey("audio_files.id", ondelete="SET NULL"), nullable=True)
+    read = Column(Boolean, nullable=False, server_default="0")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    user = relationship("User")

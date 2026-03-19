@@ -16,6 +16,7 @@ from app.schemas.schemas import (
 )
 from app.services.emotion import auto_finalize_emotions
 from app.services.audit import write_audit_log
+from app.services.notifications import create_notification
 
 router = APIRouter()
 
@@ -109,6 +110,19 @@ async def create_assignment_batch(
             await db.refresh(a)
         await write_audit_log(db, _admin.id, "assign_task_batch", "audio_file", body.audio_file_id,
                               {"annotator_id": body.annotator_id, "task_types": body.task_types})
+
+        # Notify the annotator — one notification summarising all new task types
+        af_name = (await db.execute(
+            select(AudioFile.filename).where(AudioFile.id == body.audio_file_id)
+        )).scalar_one_or_none() or f"file #{body.audio_file_id}"
+        task_label = " + ".join(sorted({a.task_type for a in created}))
+        await create_notification(
+            db,
+            user_id=body.annotator_id,
+            notif_type="assignment",
+            message=f"New task assigned: {task_label} on {af_name}",
+            audio_file_id=body.audio_file_id,
+        )
 
     return created
 
