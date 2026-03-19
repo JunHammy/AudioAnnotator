@@ -926,6 +926,7 @@ function AnnotateInner() {
   const editorRef = useRef<SegmentEditorRef>(null)
   const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const dataRef = useRef<AnnotateData | null>(null)
+  const segmentFilterRef = useRef(segmentFilter)
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
   const [waveformReady, setWaveformReady] = useState(false)
@@ -1124,7 +1125,7 @@ function AnnotateInner() {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
       if (fileId) {
-        try { sessionStorage.setItem(`annotate_${fileId}`, JSON.stringify({ accordions: [...next], segmentFilter })) } catch {}
+        try { sessionStorage.setItem(`annotate_${fileId}`, JSON.stringify({ accordions: [...next], segmentFilter: segmentFilterRef.current })) } catch {}
       }
       return next
     })
@@ -1444,6 +1445,9 @@ function AnnotateInner() {
       setCompleting(c => ({ ...c, [assignment.id]: false }))
     }
   }
+
+  // Keep segmentFilterRef current so toggleAccordion always reads the latest value
+  useEffect(() => { segmentFilterRef.current = segmentFilter }, [segmentFilter])
 
   // Persist segmentFilter changes to sessionStorage
   useEffect(() => {

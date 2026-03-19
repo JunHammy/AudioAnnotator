@@ -2,7 +2,7 @@ from datetime import timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import Integer, select, func
+from sqlalchemy import select, func
 
 from app.auth.dependencies import get_current_user
 from app.database import get_db
@@ -499,7 +499,6 @@ async def get_segment_history(
     Returns the edit history for a single segment.
     Accessible to all authenticated users so annotators can see their own history.
     """
-    from app.models.models import SegmentEditHistory
     rows = (await db.execute(
         select(SegmentEditHistory, User.username)
         .join(User, SegmentEditHistory.edited_by == User.id)
@@ -534,9 +533,7 @@ async def emotion_progress(
         select(
             SpeakerSegment.audio_file_id,
             func.count(SpeakerSegment.id).label("total"),
-            func.sum(
-                func.cast(SpeakerSegment.emotion.isnot(None), Integer)
-            ).label("annotated"),
+            func.count(SpeakerSegment.emotion).label("annotated"),
         )
         .where(SpeakerSegment.annotator_id == current_user.id)
         .where(SpeakerSegment.source == "annotator")
