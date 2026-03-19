@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import cast, func, distinct, select, case, Date as SADate
+from sqlalchemy import func, distinct, select, case
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
@@ -196,12 +196,12 @@ async def get_dashboard(
     cutoff = datetime.now(timezone.utc) - timedelta(days=14)
     velocity_raw = (await db.execute(
         select(
-            cast(Assignment.completed_at, SADate).label("day"),
+            func.date(Assignment.completed_at).label("day"),
             func.count(Assignment.id).label("count"),
         )
         .where(Assignment.status == "completed")
         .where(Assignment.completed_at >= cutoff)
-        .group_by(cast(Assignment.completed_at, SADate))
+        .group_by(func.date(Assignment.completed_at))
     )).all()
     velocity_map = {str(r.day): r.count for r in velocity_raw}
     today = datetime.now(timezone.utc).date()

@@ -25,6 +25,7 @@ export interface WaveformPlayerRef {
   play: () => void
   pause: () => void
   playPause: () => void
+  playRange: (start: number, end: number) => void
   getCurrentTime: () => number
   addRegion: (id: string, start: number, end: number, color?: string) => void
   clearRegions: () => void
@@ -175,6 +176,19 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       play: () => wsRef.current?.play(),
       pause: () => wsRef.current?.pause(),
       playPause: () => wsRef.current?.playPause(),
+      playRange: (start: number, end: number) => {
+        const ws = wsRef.current
+        if (!ws) return
+        ws.setTime(start)
+        const stopAtEnd = (t: number) => {
+          if (t >= end) {
+            ws.pause()
+            ws.un("audioprocess", stopAtEnd)
+          }
+        }
+        ws.on("audioprocess", stopAtEnd)
+        ws.play()
+      },
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
       addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
         addingProgrammatically.current = true

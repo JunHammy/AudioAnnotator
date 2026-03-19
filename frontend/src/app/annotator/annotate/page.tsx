@@ -194,6 +194,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   duration,
   currentTime,
   selectedId,
+  highlightedId,
   getColor,
   getLabel,
   onSelect,
@@ -205,6 +206,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   duration: number
   currentTime: number
   selectedId?: number
+  highlightedId?: number
   getColor: (s: T) => string
   getLabel: (s: T) => string
   onSelect: (s: T) => void
@@ -265,6 +267,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
           const left = (seg.start_time / duration) * 100
           const width = ((seg.end_time - seg.start_time) / duration) * 100
           const isSelected = selectedId === seg.id
+          const isHighlighted = highlightedId === seg.id
           return (
             <Box
               key={seg.id}
@@ -273,12 +276,12 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
               bottom="2px"
               left={`${left}%`}
               w={`${width}%`}
-              bg={getColor(seg)}
-              opacity={isSelected ? 1 : 0.75}
+              bg={isHighlighted ? "rgba(6,182,212,0.55)" : getColor(seg)}
+              opacity={isSelected || isHighlighted ? 1 : 0.75}
               rounded="sm"
               cursor="pointer"
-              borderWidth={isSelected ? "2px" : "0"}
-              borderColor="white"
+              borderWidth={isSelected || isHighlighted ? "2px" : "0"}
+              borderColor={isHighlighted ? "cyan.300" : "white"}
               overflow="hidden"
               onClick={() => onSelect(seg)}
               title={`${fmtTime(seg.start_time)}–${fmtTime(seg.end_time)}: ${getLabel(seg)}`}
@@ -323,6 +326,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   speakerLabels?: string[]
   speakerSegments?: Segment[]
   getGenderForSpeaker?: (label: string) => string
+  onSpeakerSegHover?: (id: number | null) => void
 }>(function SegmentEditor({
   selection,
   onClose,
@@ -333,6 +337,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   speakerLabels,
   speakerSegments,
   getGenderForSpeaker,
+  onSpeakerSegHover,
 }, ref) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -462,8 +467,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   }
 
   const jumpToSegment = () => {
-    playerRef.current?.seekTo(segment.start_time)
-    playerRef.current?.play()
+    playerRef.current?.playRange(segment.start_time, segment.end_time)
   }
 
   return (
@@ -767,7 +771,12 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                   <Select.Positioner>
                     <Select.Content>
                       {speakerSegments.map(s => (
-                        <Select.Item key={s.id} item={{ label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`, value: String(s.id) }}>
+                        <Select.Item
+                          key={s.id}
+                          item={{ label: `${s.speaker_label ?? "?"} (${fmtTime(s.start_time)}–${fmtTime(s.end_time)})`, value: String(s.id) }}
+                          onMouseEnter={() => { playerRef.current?.activateRegion(String(s.id)); onSpeakerSegHover?.(s.id) }}
+                          onMouseLeave={() => { playerRef.current?.deactivateRegion(String(s.id)); onSpeakerSegHover?.(null) }}
+                        >
                           <Box
                             display="inline-block"
                             w="8px"
@@ -949,6 +958,7 @@ function AnnotateInner() {
   const [waveformDuration, setWaveformDuration] = useState(0)
   const [currentTime, setCurrentTime] = useState(0)
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [hoveredSpeakerSegId, setHoveredSpeakerSegId] = useState<number | null>(null)
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
   const [remarks, setRemarks] = useState("")
   const [remarksSaving, setRemarksSaving] = useState(false)
@@ -1864,16 +1874,56 @@ function AnnotateInner() {
                     {isOpen && (
                       <Box px={3} pb={3} pt={2} display="flex" flexDir="column" gap={2} borderTopWidth="1px" borderColor="border">
                         {hasTask("speaker") && (
-                          <SegmentTrack
-                            label="Segments"
-                            segments={speakerSegs}
-                            duration={duration}
-                            currentTime={currentTime}
-                            selectedId={selection?.type === "speaker" ? selection.segment.id : undefined}
-                            getColor={(s: Segment) => speakerColor(s.speaker_label)}
-                            getLabel={(s: Segment) => s.speaker_label ?? "?"}
-                            onSelect={s => setSelection({ type: "speaker", segment: s })}
-                          />
+                          <>
+                            <SegmentTrack
+                              label="Segments"
+                              segments={speakerSegs}
+                              duration={duration}
+                              currentTime={currentTime}
+                              selectedId={selection?.type === "speaker" ? selection.segment.id : undefined}
+                              highlightedId={hoveredSpeakerSegId ?? undefined}
+                              getColor={(s: Segment) => speakerColor(s.speaker_label)}
+                              getLabel={(s: Segment) => s.speaker_label ?? "?"}
+                              onSelect={s => setSelection({ type: "speaker", segment: s })}
+                            />
+                            {/* Individual segment rows */}
+                            <Box display="flex" flexDir="column" gap={1} mt={1}>
+                              {speakerSegs.map(seg => {
+                                const isSelected = selection?.type === "speaker" && selection.segment.id === seg.id
+                                const isHovered = hoveredSpeakerSegId === seg.id
+                                return (
+                                  <HStack
+                                    key={seg.id}
+                                    px={2} py={1}
+                                    rounded="sm"
+                                    cursor="pointer"
+                                    gap={2}
+                                    fontSize="xs"
+                                    borderWidth="1px"
+                                    borderColor={isHovered ? "cyan.400" : isSelected ? "blue.500" : "border"}
+                                    bg={isHovered ? "rgba(6,182,212,0.12)" : isSelected ? "blue.900" : "bg.muted"}
+                                    transition="all 0.15s"
+                                    onClick={() => setSelection({ type: "speaker", segment: seg })}
+                                  >
+                                    <Box w="6px" h="6px" rounded="full" bg={speakerColor(seg.speaker_label)} flexShrink={0} />
+                                    <Text color="fg.muted" fontFamily="mono" flex={1}>
+                                      {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
+                                    </Text>
+                                    <Box
+                                      as="button"
+                                      px={1} py="1px"
+                                      fontSize="10px"
+                                      color="fg.subtle"
+                                      _hover={{ color: "fg" }}
+                                      onClick={e => { e.stopPropagation(); playerRef.current?.playRange(seg.start_time, seg.end_time) }}
+                                    >
+                                      ▶
+                                    </Box>
+                                  </HStack>
+                                )
+                              })}
+                            </Box>
+                          </>
                         )}
                         {hasTask("transcription") && (
                           trSegs.length > 0 ? (() => {
@@ -1985,8 +2035,20 @@ function AnnotateInner() {
             onTimesChanged={load}
             playerRef={playerRef}
             speakerLabels={speakerLabels}
-            speakerSegments={data.speaker_segments}
+            speakerSegments={
+              selection.type === "transcription"
+                ? (() => {
+                    for (const [label, segs] of groupedTranscription) {
+                      if (segs.some(s => s.id === selection.segment.id)) {
+                        return data.speaker_segments.filter(sp => sp.speaker_label === label)
+                      }
+                    }
+                    return data.speaker_segments
+                  })()
+                : data.speaker_segments
+            }
             getGenderForSpeaker={getGenderForSpeaker}
+            onSpeakerSegHover={setHoveredSpeakerSegId}
           />
         )}
       </Box>

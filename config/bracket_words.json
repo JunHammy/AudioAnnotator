@@ -1,4 +1,15 @@
 {
-  "parentheses": ["uhm", "um", "lah", "ah", "uh", "er", "hmm"],
-  "square_brackets": ["unk"]
+  "parentheses": [
+    "ah",
+    "er",
+    "hmm",
+    "huh",
+    "lah",
+    "uh",
+    "uhm",
+    "um"
+  ],
+  "square_brackets": [
+    "unk"
+  ]
 }
