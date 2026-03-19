@@ -31,7 +31,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
-import { ArrowLeft, CheckCheck, Keyboard, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { ArrowLeft, CheckCheck, Keyboard, MessageSquare, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
 import dynamic from "next/dynamic"
 import api from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -945,6 +945,7 @@ function AnnotateInner() {
   const [completing, setCompleting] = useState<Record<number, boolean>>({})
   const [remarks, setRemarks] = useState("")
   const [remarksSaving, setRemarksSaving] = useState(false)
+  const [remarksOpen, setRemarksOpen] = useState(false)
   const [addingSegment, setAddingSegment] = useState(false)
   const [addingSpeakerMode, setAddingSpeakerMode] = useState(false)
   const [newSpeakerName, setNewSpeakerName] = useState("")
@@ -1333,6 +1334,7 @@ function AnnotateInner() {
     try {
       await api.patch(`/api/audio-files/${data.audio_file.id}/remarks`, { annotator_remarks: remarks || null })
       ToastWizard.standard("success", "Remarks saved")
+      setRemarksOpen(false)
     } catch {
       ToastWizard.standard("error", "Failed to save remarks")
     } finally {
@@ -1631,6 +1633,16 @@ function AnnotateInner() {
           >
             <Keyboard size={14} />
           </IconButton>
+          <IconButton
+            aria-label="Remarks for admin"
+            size="sm"
+            variant={remarks || data.audio_file.admin_response ? "solid" : "ghost"}
+            colorPalette={data.audio_file.admin_response ? "blue" : remarks ? "orange" : "gray"}
+            title="Remarks for admin"
+            onClick={() => setRemarksOpen(true)}
+          >
+            <MessageSquare size={14} />
+          </IconButton>
         </HStack>
 
         {/* Row 2: action buttons + assignment status pills */}
@@ -1751,8 +1763,8 @@ function AnnotateInner() {
             </Box>
           </Box>
 
-          {/* ── Scrollable bottom: speaker accordions + emotion + remarks ── */}
-          <Box flex={1} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}>
+          {/* ── Scrollable bottom: speaker accordions + emotion ── */}
+          <Box flex={1} minH={0} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}>
 
           {/* Segment tracks */}
           {data.assignments.length > 0 && (
@@ -1925,42 +1937,6 @@ function AnnotateInner() {
             </VStack>
           )}
 
-          {/* Remarks + admin response */}
-          <Box borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">
-            {/* Admin response — shown prominently when present */}
-            {data.audio_file.admin_response && (
-              <Box bg="blue.900" borderBottomWidth="1px" borderColor="blue.800" px={3} py={2}>
-                <HStack gap={2} mb={1}>
-                  <Text fontSize="xs" fontWeight="semibold" color="blue.300">Admin Response</Text>
-                  <Badge size="xs" colorPalette="blue">New</Badge>
-                </HStack>
-                <Text fontSize="sm" color="blue.100" whiteSpace="pre-wrap">{data.audio_file.admin_response}</Text>
-              </Box>
-            )}
-            {/* Annotator remarks */}
-            <Box bg="bg.subtle" p={3}>
-              <HStack mb={2} justify="space-between" align="center">
-                <Text fontSize="xs" fontWeight="semibold" color="fg">Remarks for admin</Text>
-                <Button size="xs" colorPalette="blue" variant="outline" loading={remarksSaving} onClick={saveRemarks}>
-                  <Save size={11} /> Save
-                </Button>
-              </HStack>
-              <Textarea
-                value={remarks}
-                onChange={e => setRemarks(e.target.value)}
-                placeholder="e.g. Language sounds like Mandarin, please update language field."
-                rows={3}
-                fontSize="xs"
-                bg="bg.muted"
-                borderColor="border"
-                color="fg"
-                resize="vertical"
-              />
-              <Text fontSize="10px" color="fg.subtle" mt={1}>
-                Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
-              </Text>
-            </Box>
-          </Box>
           </Box> {/* end scrollable bottom */}
         </Box> {/* end flex column */}
 
@@ -2182,6 +2158,46 @@ function AnnotateInner() {
                 Shortcuts are disabled when an input or textarea is focused.
               </Text>
             </Dialog.Body>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
+
+      {/* ── Remarks Modal ── */}
+      <Dialog.Root open={remarksOpen} onOpenChange={({ open }) => setRemarksOpen(open)}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="480px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Remarks for Admin</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body pt={4} pb={4}>
+              {data?.audio_file.admin_response && (
+                <Box bg="blue.900" borderWidth="1px" borderColor="blue.800" rounded="md" px={3} py={2} mb={4}>
+                  <Text fontSize="xs" fontWeight="semibold" color="blue.300" mb={1}>Admin Response</Text>
+                  <Text fontSize="sm" color="blue.100" whiteSpace="pre-wrap">{data.audio_file.admin_response}</Text>
+                </Box>
+              )}
+              <Textarea
+                value={remarks}
+                onChange={e => setRemarks(e.target.value)}
+                placeholder="e.g. Language sounds like Mandarin, please update language field."
+                rows={5}
+                fontSize="sm"
+                bg="bg.muted"
+                borderColor="border"
+                color="fg"
+                resize="vertical"
+              />
+              <Text fontSize="10px" color="fg.subtle" mt={1}>
+                Visible to admins. Last writer's note is kept — coordinate with co-annotators if needed.
+              </Text>
+            </Dialog.Body>
+            <Dialog.Footer borderTopWidth="1px" borderColor="border" pt={3} gap={2}>
+              <Button size="sm" variant="ghost" onClick={() => setRemarksOpen(false)}>Cancel</Button>
+              <Button size="sm" colorPalette="blue" loading={remarksSaving} onClick={saveRemarks}>
+                <Save size={13} /> Save Remarks
+              </Button>
+            </Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>
       </Dialog.Root>
