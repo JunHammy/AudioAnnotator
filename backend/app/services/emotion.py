@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.models import AudioFile, FinalAnnotation, SpeakerSegment, User
+from app.services.trust_score import compute_new_trust_score
 
 
 def compute_tier(annotations: list[dict]) -> dict:
@@ -92,9 +93,13 @@ async def auto_finalize_emotions(db: AsyncSession, file_id: int, finalized_by: i
     now = datetime.now(timezone.utc)
     auto_resolved = 0
 
+    # Track per-annotator agreement for trust score updates.
+    # Structure: {annotator_id: {"agreements": int, "batch_size": int}}
+    annotator_stats: dict[int, dict] = {}
+
     for seg in baseline:
         if seg.id in existing_ids:
-            continue  # already decided (e.g. by admin manually)
+            continue  # already decided manually — skip, don't double-count
 
         key = (round(seg.start_time, 3), round(seg.end_time, 3))
         annotations = seg_map.get(key, [])
@@ -113,7 +118,40 @@ async def auto_finalize_emotions(db: AsyncSession, file_id: int, finalized_by: i
             ))
             auto_resolved += 1
 
+            # Accumulate agreement stats for each annotator who voted on this segment.
+            # Annotators who left emotion=None are excluded (no opinion, not penalised).
+            winning = tier_info["winning_label"]
+            for ann in annotations:
+                if ann["emotion"] is None:
+                    continue
+                aid = ann["annotator_id"]
+                if aid not in annotator_stats:
+                    annotator_stats[aid] = {"agreements": 0, "batch_size": 0}
+                annotator_stats[aid]["batch_size"] += 1
+                if ann["emotion"] == winning:
+                    annotator_stats[aid]["agreements"] += 1
+
     if auto_resolved:
+        await db.flush()
+
+    # ── Trust score updates ────────────────────────────────────────────────
+    if annotator_stats:
+        users = (await db.execute(
+            select(User).where(User.id.in_(annotator_stats.keys()))
+        )).scalars().all()
+
+        for user in users:
+            stats = annotator_stats[user.id]
+            if stats["batch_size"] == 0:
+                continue
+            user.trust_score = compute_new_trust_score(
+                current_score=user.trust_score,
+                segments_reviewed=user.segments_reviewed,
+                agreements_in_batch=stats["agreements"],
+                batch_size=stats["batch_size"],
+            )
+            user.segments_reviewed += stats["batch_size"]
+
         await db.flush()
 
     return auto_resolved
