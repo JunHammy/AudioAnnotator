@@ -188,7 +188,8 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       },
       activateRegion: (id: string) => {
         const entry = regionMapRef.current.get(id)
-        if (entry) entry.region.setOptions({ drag: true, resize: true, color: "rgba(59,130,246,0.55)" })
+        // Cyan — distinct from all speaker colours (blue/green/amber/red/purple)
+        if (entry) entry.region.setOptions({ drag: true, resize: true, color: "rgba(6,182,212,0.6)" })
       },
       deactivateRegion: (id: string) => {
         const entry = regionMapRef.current.get(id)
