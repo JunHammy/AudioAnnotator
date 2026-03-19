@@ -20,6 +20,7 @@ import {
   createListCollection,
 } from "@chakra-ui/react"
 import {
+  AlertTriangle,
   CheckCircle,
   ChevronDown,
   ChevronRight,
@@ -723,9 +724,17 @@ export default function ReviewFinalizePage() {
           "&::-webkit-scrollbar-thumb:hover": { background: "#5c5f6b" },
         }}
       >
-        <Heading size="sm" mb={3} color="fg.muted">
-          Audio Files
-        </Heading>
+        <HStack mb={3} justify="space-between" align="center">
+          <Heading size="sm" color="fg.muted">Audio Files</Heading>
+          {(() => {
+            const warn = files.filter(f => f.emotion_annotators > 0 && f.emotion_annotators < 2).length
+            return warn > 0 ? (
+              <Badge colorPalette="orange" size="sm" title="Files with fewer than 2 emotion annotators">
+                <AlertTriangle size={10} /> {warn} low
+              </Badge>
+            ) : null
+          })()}
+        </HStack>
         {loadingFiles ? (
           <Spinner size="sm" />
         ) : (
@@ -734,6 +743,7 @@ export default function ReviewFinalizePage() {
               const pct = f.total_segments
                 ? Math.round((f.finalized_emotions / f.total_segments) * 100)
                 : 0
+              const needsMoreAnnotators = f.emotion_annotators > 0 && f.emotion_annotators < 2
               return (
                 <Box
                   key={f.id}
@@ -742,7 +752,13 @@ export default function ReviewFinalizePage() {
                   cursor="pointer"
                   bg={selectedFile?.id === f.id ? "bg.muted" : "transparent"}
                   borderWidth="1px"
-                  borderColor={selectedFile?.id === f.id ? "blue.500" : "transparent"}
+                  borderColor={
+                    selectedFile?.id === f.id
+                      ? "blue.500"
+                      : needsMoreAnnotators
+                      ? "orange.800"
+                      : "transparent"
+                  }
                   _hover={{ bg: "bg.subtle" }}
                   onClick={() => setSelectedFile(f)}
                 >
@@ -758,8 +774,13 @@ export default function ReviewFinalizePage() {
                   </HStack>
 
                   <HStack mt={1} gap={2} flexWrap="wrap">
-                    <Badge size="sm" colorPalette="blue">
-                      {f.emotion_annotators} annotators
+                    <Badge
+                      size="sm"
+                      colorPalette={needsMoreAnnotators ? "orange" : "blue"}
+                      title={needsMoreAnnotators ? "Fewer than 2 emotion annotators — results may be unreliable" : undefined}
+                    >
+                      {needsMoreAnnotators && <AlertTriangle size={9} />}
+                      {f.emotion_annotators} annotator{f.emotion_annotators !== 1 ? "s" : ""}
                     </Badge>
                     <Badge size="sm" colorPalette={pct === 100 ? "green" : "gray"}>
                       {pct}% done

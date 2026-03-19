@@ -12,7 +12,7 @@ import {
   Table,
   Text,
 } from "@chakra-ui/react";
-import { Database } from "lucide-react";
+import { AlertTriangle, Database } from "lucide-react";
 import api from "@/lib/axios";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -23,6 +23,7 @@ interface DashboardData {
     assigned_files: number;
     completed_assignments: number;
     flagged_segments: number;
+    low_annotator_files: number;
   };
   recent_activity: {
     id: number;
@@ -123,11 +124,35 @@ export default function AdminDashboard() {
       <Text color="fg.muted" mb={6}>Overview of annotation progress</Text>
 
       {/* Stat cards */}
-      <Grid templateColumns="repeat(4, 1fr)" gap={4} mb={8}>
+      <Grid templateColumns="repeat(5, 1fr)" gap={4} mb={8}>
         <StatCard label="Total Files"           value={data.stats.total_files}            color="fg" />
         <StatCard label="Files Assigned"        value={data.stats.assigned_files}         color="blue.400" />
         <StatCard label="Completed Assignments" value={data.stats.completed_assignments}  color="green.400" />
         <StatCard label="Flagged Segments"      value={data.stats.flagged_segments}       color="red.400" />
+        {/* Clickable warning card — links to review page */}
+        <Box
+          bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" p={5}
+          cursor={data.stats.low_annotator_files > 0 ? "pointer" : "default"}
+          _hover={data.stats.low_annotator_files > 0 ? { borderColor: "orange.500", bg: "bg.muted" } : {}}
+          transition="all 0.15s"
+          onClick={() => data.stats.low_annotator_files > 0 && router.push("/admin/review")}
+          title={data.stats.low_annotator_files > 0 ? "Click to review under-annotated files" : undefined}
+        >
+          <Flex justify="space-between" align="center" mb={1}>
+            <Text fontSize="sm" color="fg.muted">Under-Annotated</Text>
+            {data.stats.low_annotator_files > 0 && (
+              <AlertTriangle size={14} color="var(--chakra-colors-orange-400)" />
+            )}
+          </Flex>
+          <Text
+            fontSize="3xl"
+            fontWeight="bold"
+            color={data.stats.low_annotator_files > 0 ? "orange.400" : "fg.muted"}
+          >
+            {data.stats.low_annotator_files.toLocaleString()}
+          </Text>
+          <Text fontSize="10px" color="fg.subtle" mt={1}>files need ≥2 annotators</Text>
+        </Box>
       </Grid>
 
       <Grid templateColumns="3fr 2fr" gap={6} mb={8}>

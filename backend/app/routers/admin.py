@@ -108,6 +108,20 @@ async def get_dashboard(
         select(func.count(SpeakerSegment.id)).where(SpeakerSegment.is_ambiguous == True)
     )).scalar_one()
 
+    # Files with emotion annotators but fewer than 2 (need more for reliable consensus)
+    _emotion_counts = (
+        select(
+            SpeakerSegment.audio_file_id,
+            func.count(distinct(SpeakerSegment.annotator_id)).label("ann_count"),
+        )
+        .where(SpeakerSegment.source == "annotator")
+        .group_by(SpeakerSegment.audio_file_id)
+        .subquery()
+    )
+    low_annotator_files = (await db.execute(
+        select(func.count()).select_from(_emotion_counts).where(_emotion_counts.c.ann_count < 2)
+    )).scalar_one()
+
     # ── Recent activity (last 10 assignments) ──────────────────────────────────
     recent_rows = (await db.execute(
         select(
@@ -183,6 +197,7 @@ async def get_dashboard(
             "assigned_files": assigned_files,
             "completed_assignments": completed_count,
             "flagged_segments": flagged_count,
+            "low_annotator_files": low_annotator_files,
         },
         "recent_activity": [
             {
