@@ -314,7 +314,7 @@ interface SegmentEditorRef {
 const SegmentEditor = forwardRef<SegmentEditorRef, {
   selection: Selection
   onClose: () => void
-  onSaved: (type: SelectionType, updated: Segment | TranscriptSegment) => void
+  onSaved: (type: SelectionType, updated: Segment | TranscriptSegment, previous: Segment | TranscriptSegment) => void
   onDelete?: () => Promise<void>
   onTimesChanged?: () => void
   playerRef: React.RefObject<WaveformPlayerRef | null>
@@ -385,7 +385,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
           notes: notes || null,
           updated_at: segment.updated_at,
         })
-        onSaved(type, res.data)
+        onSaved(type, res.data, segment)
         ToastWizard.standard("success", "Emotion saved")
       } else if (type === "speaker") {
         const payload: Record<string, unknown> = {
@@ -400,7 +400,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
         const timesChanged = payload.start_time !== undefined || payload.end_time !== undefined
 
         res = await api.patch(`/api/segments/speaker/${segment.id}`, payload)
-        onSaved(type, res.data)
+        onSaved(type, res.data, segment)
         if (timesChanged) onTimesChanged?.()
         ToastWizard.standard("success", "Speaker/Gender saved")
       } else {
@@ -414,7 +414,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
         const timesChanged = payload.start_time !== undefined || payload.end_time !== undefined
 
         res = await api.patch(`/api/segments/transcription/${segment.id}`, payload)
-        onSaved(type, res.data)
+        onSaved(type, res.data, segment)
         if (timesChanged) onTimesChanged?.()
         ToastWizard.standard("success", "Transcription saved")
       }
@@ -927,6 +927,14 @@ function AnnotateInner() {
   const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const dataRef = useRef<AnnotateData | null>(null)
   const segmentFilterRef = useRef<"all" | "unannotated" | "ambiguous" | "has_notes">("all")
+  const undoStack = useRef<Array<{
+    segmentId: number
+    type: SelectionType
+    prevValues: Record<string, unknown>
+    currentUpdatedAt: string
+  }>>([])
+  const isUndoing = useRef(false)
+  const undoRef = useRef<() => void>(() => {})
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
   const [waveformReady, setWaveformReady] = useState(false)
@@ -1168,7 +1176,26 @@ function AnnotateInner() {
     [data, load],
   )
 
-  const handleSaved = (type: SelectionType, updated: Segment | TranscriptSegment) => {
+  const handleSaved = (type: SelectionType, updated: Segment | TranscriptSegment, previous?: Segment | TranscriptSegment) => {
+    // Push undo entry (skip when undo itself calls handleSaved)
+    if (previous && !isUndoing.current) {
+      let prevValues: Record<string, unknown>
+      if (type === "emotion") {
+        const s = previous as Segment
+        prevValues = { emotion: s.emotion ?? null, emotion_other: s.emotion_other ?? null, is_ambiguous: s.is_ambiguous ?? false, notes: s.notes ?? null }
+      } else if (type === "speaker") {
+        const s = previous as Segment
+        prevValues = { speaker_label: s.speaker_label ?? null, gender: s.gender ?? null, is_ambiguous: s.is_ambiguous ?? false, notes: s.notes ?? null, start_time: s.start_time, end_time: s.end_time }
+      } else {
+        const s = previous as TranscriptSegment
+        prevValues = { edited_text: s.edited_text ?? null, notes: s.notes ?? null, start_time: s.start_time, end_time: s.end_time }
+      }
+      undoStack.current = [
+        ...undoStack.current.slice(-19),
+        { segmentId: previous.id, type, prevValues, currentUpdatedAt: updated.updated_at },
+      ]
+    }
+
     // Capture old segment before state update (for gender propagation check)
     const oldSeg = type === "speaker" ? data?.speaker_segments.find(s => s.id === updated.id) : null
 
@@ -1224,6 +1251,27 @@ function AnnotateInner() {
     const { start, end } = smartPlacement(data?.speaker_segments ?? [], currentT, waveformDuration)
     setSegmentModal({ open: true, speaker: speakerLabels[0] ?? "", start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)) })
   }
+
+  // Undo — pop the stack and re-PATCH with previous values
+  const undo = async () => {
+    if (undoStack.current.length === 0) return
+    const entry = undoStack.current[undoStack.current.length - 1]
+    undoStack.current = undoStack.current.slice(0, -1)
+    isUndoing.current = true
+    try {
+      const endpoint = entry.type === "transcription"
+        ? `/api/segments/transcription/${entry.segmentId}`
+        : `/api/segments/speaker/${entry.segmentId}`
+      const res = await api.patch(endpoint, { ...entry.prevValues, updated_at: entry.currentUpdatedAt })
+      handleSaved(entry.type, res.data)
+      ToastWizard.standard("success", "Undone", undefined, 1500, true)
+    } catch {
+      ToastWizard.standard("error", "Undo failed", "The segment may have changed since the last save.", 3000, true)
+    } finally {
+      isUndoing.current = false
+    }
+  }
+  undoRef.current = undo
 
   const openTrModal = () => {
     const currentT = playerRef.current?.getCurrentTime() ?? 0
@@ -1368,6 +1416,13 @@ function AnnotateInner() {
         target.tagName === "TEXTAREA" ||
         target.isContentEditable
       ) return
+
+      // Ctrl/Cmd+Z — undo last segment save
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault()
+        undoRef.current()
+        return
+      }
 
       switch (e.key) {
         case " ":
@@ -2082,6 +2137,7 @@ function AnnotateInner() {
                   ["N", "Jump to next unannotated emotion"],
                   ["1 – 8", "Set emotion (Neutral, Happy, Sad, Angry, Surprised, Fear, Disgust, Other)"],
                   ["A", "Toggle ambiguous on selected segment"],
+                  ["Ctrl+Z", "Undo last segment save"],
                   ["?", "Toggle this help panel"],
                 ] as [string, string][]).map(([key, desc]) => (
                   <HStack key={key} justify="space-between" py={1} borderBottomWidth="1px" borderColor="border" _last={{ borderBottomWidth: 0 }}>
