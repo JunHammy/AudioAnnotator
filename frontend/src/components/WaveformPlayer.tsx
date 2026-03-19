@@ -22,6 +22,7 @@ export interface WaveformPlayerRef {
   seekTo: (seconds: number) => void
   play: () => void
   pause: () => void
+  playPause: () => void
   getCurrentTime: () => number
   addRegion: (id: string, start: number, end: number, color?: string) => void
   clearRegions: () => void
@@ -155,6 +156,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       },
       play: () => wsRef.current?.play(),
       pause: () => wsRef.current?.pause(),
+      playPause: () => wsRef.current?.playPause(),
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
       addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
         regionsRef.current?.addRegion({ id, start, end, color, drag: true, resize: true })

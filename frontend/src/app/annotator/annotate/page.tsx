@@ -2,8 +2,10 @@
 
 import {
   Suspense,
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   useMemo,
@@ -28,7 +30,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
-import { ArrowLeft, CheckCheck, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { ArrowLeft, CheckCheck, Keyboard, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
 import dynamic from "next/dynamic"
 import api from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -303,17 +305,13 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
 
 // ─── Segment Editor ───────────────────────────────────────────────────────────
 
-function SegmentEditor({
-  selection,
-  onClose,
-  onSaved,
-  onDelete,
-  onTimesChanged,
-  playerRef,
-  speakerLabels,
-  speakerSegments,
-  getGenderForSpeaker,
-}: {
+interface SegmentEditorRef {
+  save: () => void
+  setEmotion: (e: string) => void
+  toggleAmbiguous: () => void
+}
+
+const SegmentEditor = forwardRef<SegmentEditorRef, {
   selection: Selection
   onClose: () => void
   onSaved: (type: SelectionType, updated: Segment | TranscriptSegment) => void
@@ -323,7 +321,17 @@ function SegmentEditor({
   speakerLabels?: string[]
   speakerSegments?: Segment[]
   getGenderForSpeaker?: (label: string) => string
-}) {
+}>(function SegmentEditor({
+  selection,
+  onClose,
+  onSaved,
+  onDelete,
+  onTimesChanged,
+  playerRef,
+  speakerLabels,
+  speakerSegments,
+  getGenderForSpeaker,
+}, ref) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -421,6 +429,13 @@ function SegmentEditor({
       setSaving(false)
     }
   }
+
+  // Expose imperative methods for keyboard shortcuts (after save is defined)
+  useImperativeHandle(ref, () => ({
+    save,
+    setEmotion,
+    toggleAmbiguous: () => setIsAmbiguous(prev => !prev),
+  }))
 
   const handleDelete = async () => {
     if (!onDelete) return
@@ -840,7 +855,7 @@ function SegmentEditor({
       </VStack>
     </Box>
   )
-}
+})
 
 // ─── Inner page (needs useSearchParams) ──────────────────────────────────────
 
@@ -850,6 +865,7 @@ function AnnotateInner() {
   const fileId = searchParams.get("file")
 
   const playerRef = useRef<WaveformPlayerRef>(null)
+  const editorRef = useRef<SegmentEditorRef>(null)
   const regionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const dataRef = useRef<AnnotateData | null>(null)
   const [data, setData] = useState<AnnotateData | null>(null)
@@ -869,6 +885,7 @@ function AnnotateInner() {
   const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set())
   const [hasUpdates, setHasUpdates] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
 
   const load = useCallback(async () => {
     if (!fileId) return
@@ -1265,6 +1282,64 @@ function AnnotateInner() {
     setRefreshing(false)
   }
 
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      // Skip when user is typing in an input / textarea / contenteditable
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) return
+
+      switch (e.key) {
+        case " ":
+          e.preventDefault()
+          playerRef.current?.playPause()
+          break
+        case "ArrowLeft":
+          e.preventDefault()
+          playerRef.current?.seekTo(Math.max(0, (playerRef.current?.getCurrentTime() ?? 0) - 2))
+          break
+        case "ArrowRight":
+          e.preventDefault()
+          playerRef.current?.seekTo(Math.max(0, (playerRef.current?.getCurrentTime() ?? 0) + 2))
+          break
+        case "s":
+        case "S":
+          e.preventDefault()
+          editorRef.current?.save()
+          break
+        case "n":
+        case "N": {
+          e.preventDefault()
+          const d = dataRef.current
+          if (!d || !d.assignments.some(a => a.task_type === "emotion")) break
+          const unfinished = d.emotion_segments.find(seg => seg.emotion === null)
+          if (unfinished) setSelection({ type: "emotion", segment: unfinished })
+          break
+        }
+        case "a":
+        case "A":
+          e.preventDefault()
+          editorRef.current?.toggleAmbiguous()
+          break
+        case "?":
+          e.preventDefault()
+          setShowShortcuts(s => !s)
+          break
+        default:
+          if (/^[1-8]$/.test(e.key) && e.key !== "") {
+            e.preventDefault()
+            editorRef.current?.setEmotion(EMOTIONS[parseInt(e.key, 10) - 1])
+          }
+      }
+    }
+    document.addEventListener("keydown", handler)
+    return () => document.removeEventListener("keydown", handler)
+  }, []) // stable — uses refs and dataRef for fresh values
+
   const markComplete = async (assignment: Assignment) => {
     setCompleting(c => ({ ...c, [assignment.id]: true }))
     try {
@@ -1386,6 +1461,15 @@ function AnnotateInner() {
               <RefreshCw size={14} />
             </IconButton>
           )}
+          <IconButton
+            aria-label="Keyboard shortcuts"
+            size="sm"
+            variant="ghost"
+            title="Keyboard shortcuts (?)"
+            onClick={() => setShowShortcuts(s => !s)}
+          >
+            <Keyboard size={14} />
+          </IconButton>
         </HStack>
 
         {/* Row 2: action buttons + assignment status pills */}
@@ -1677,6 +1761,7 @@ function AnnotateInner() {
         {/* Segment editor sidebar — key forces remount on segment change */}
         {selection && (
           <SegmentEditor
+            ref={editorRef}
             key={selection.segment.id}
             selection={selection}
             onClose={() => setSelection(null)}
@@ -1852,6 +1937,44 @@ function AnnotateInner() {
                 Add Transcription
               </Button>
             </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
+
+      {/* ── Keyboard Shortcuts Help ── */}
+      <Dialog.Root open={showShortcuts} onOpenChange={({ open }) => setShowShortcuts(open)}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="400px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Keyboard Shortcuts</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body pt={3} pb={4}>
+              <VStack align="stretch" gap={1}>
+                {([
+                  ["Space", "Play / Pause"],
+                  ["← / →", "Seek ±2 seconds"],
+                  ["S", "Save selected segment"],
+                  ["N", "Jump to next unannotated emotion"],
+                  ["1 – 8", "Set emotion (Neutral, Happy, Sad, Angry, Surprised, Fear, Disgust, Other)"],
+                  ["A", "Toggle ambiguous on selected segment"],
+                  ["?", "Toggle this help panel"],
+                ] as [string, string][]).map(([key, desc]) => (
+                  <HStack key={key} justify="space-between" py={1} borderBottomWidth="1px" borderColor="border" _last={{ borderBottomWidth: 0 }}>
+                    <Text fontSize="xs" color="fg.muted">{desc}</Text>
+                    <Box
+                      px={2} py="1px" bg="bg.muted" borderWidth="1px" borderColor="border"
+                      rounded="sm" fontFamily="mono" fontSize="xs" color="fg" flexShrink={0}
+                    >
+                      {key}
+                    </Box>
+                  </HStack>
+                ))}
+              </VStack>
+              <Text fontSize="10px" color="fg.subtle" mt={3}>
+                Shortcuts are disabled when an input or textarea is focused.
+              </Text>
+            </Dialog.Body>
           </Dialog.Content>
         </Dialog.Positioner>
       </Dialog.Root>
