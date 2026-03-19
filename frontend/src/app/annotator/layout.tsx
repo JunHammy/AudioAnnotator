@@ -9,7 +9,7 @@ export default function AnnotatorLayout({ children }: { children: React.ReactNod
     <AuthGuard role="annotator">
       <Flex h="100vh" overflow="hidden" bg="bg">
         <Sidebar role="annotator" />
-        <Box flex={1} overflowY="auto">
+        <Box flex={1} overflow="hidden">
           {children}
         </Box>
       </Flex>

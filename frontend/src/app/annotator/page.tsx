@@ -147,7 +147,7 @@ export default function AnnotatorTasksPage() {
   const FILTERS = ["all", "pending", "in_progress", "completed"] as const;
 
   return (
-    <Box p={8} maxW="1000px">
+    <Box p={8} maxW="1000px" h="100%" overflowY="auto">
       <Heading size="lg" color="fg" mb={1}>My Tasks</Heading>
       <Text color="fg.muted" mb={6}>Welcome back, {user?.username}</Text>
 
