@@ -19,7 +19,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Lock, Plus, Trash2, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Lock, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -99,6 +99,7 @@ export default function AssignTasksPage() {
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
   const [locking,      setLocking]      = useState<Record<string, boolean>>({});
+  const [reopening,    setReopening]    = useState<Set<number>>(new Set());
 
   // New assignment form state
   const [newAnnotatorId, setNewAnnotatorId] = useState<string[]>([]);
@@ -238,6 +239,19 @@ export default function AssignTasksPage() {
       ToastWizard.standard("success", "Assignment removed", "Assignment deleted.", 2000, true);
     } catch {
       ToastWizard.standard("error", "Delete failed", "Could not remove assignment.", 3000, true);
+    }
+  }
+
+  async function reopenAssignment(id: number) {
+    setReopening(prev => new Set(prev).add(id));
+    try {
+      await api.patch(`/api/assignments/${id}/status`, { status: "in_progress" });
+      setAssignments(prev => prev.map(a => a.id === id ? { ...a, status: "in_progress" } : a));
+      ToastWizard.standard("success", "Task reopened", "Status set to In Progress.", 2000, true);
+    } catch {
+      ToastWizard.standard("error", "Reopen failed", "Could not reopen the task.", 3000, true);
+    } finally {
+      setReopening(prev => { const s = new Set(prev); s.delete(id); return s; });
     }
   }
 
@@ -422,7 +436,24 @@ export default function AssignTasksPage() {
                                 <Table.Cell key={t} px={3} py={2}>
                                   {taskMap[t] ? (
                                     <Flex align="center" gap={1}>
-                                      <Box w="2" h="2" rounded="full" bg="green.400" />
+                                      <Box
+                                        w="2" h="2" rounded="full"
+                                        bg={taskMap[t]!.status === "completed" ? "green.400" : taskMap[t]!.status === "in_progress" ? "orange.400" : "fg.muted"}
+                                      />
+                                      {taskMap[t]!.status === "completed" && (
+                                        <Button
+                                          size="xs"
+                                          variant="ghost"
+                                          color="orange.400"
+                                          p={0}
+                                          minW="auto"
+                                          loading={reopening.has(taskMap[t]!.id)}
+                                          onClick={() => reopenAssignment(taskMap[t]!.id)}
+                                          title="Reopen task"
+                                        >
+                                          <RotateCcw size={11} />
+                                        </Button>
+                                      )}
                                       <Button
                                         size="xs"
                                         variant="ghost"
