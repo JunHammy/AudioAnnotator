@@ -28,6 +28,8 @@ export interface WaveformPlayerRef {
   getCurrentTime: () => number
   addRegion: (id: string, start: number, end: number, color?: string) => void
   clearRegions: () => void
+  activateRegion: (id: string) => void
+  deactivateRegion: (id: string) => void
 }
 
 interface Props {
@@ -55,6 +57,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     const containerRef = useRef<HTMLDivElement>(null)
     const wsRef = useRef<any>(null)
     const regionsRef = useRef<any>(null)
+    const regionMapRef = useRef<Map<string, { region: any; color: string }>>(new Map())
     const onRegionUpdateRef = useRef(onRegionUpdate)
     const onRangeSelectRef = useRef(onRangeSelect)
     const addingProgrammatically = useRef(false)
@@ -175,11 +178,21 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
       addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
         addingProgrammatically.current = true
-        regionsRef.current?.addRegion({ id, start, end, color, drag: false, resize: false })
+        const r = regionsRef.current?.addRegion({ id, start, end, color, drag: false, resize: false })
+        if (r) regionMapRef.current.set(id, { region: r, color })
         addingProgrammatically.current = false
       },
       clearRegions: () => {
         regionsRef.current?.clearRegions()
+        regionMapRef.current.clear()
+      },
+      activateRegion: (id: string) => {
+        const entry = regionMapRef.current.get(id)
+        if (entry) entry.region.update({ drag: true, resize: true, color: "rgba(59,130,246,0.55)" })
+      },
+      deactivateRegion: (id: string) => {
+        const entry = regionMapRef.current.get(id)
+        if (entry) entry.region.update({ drag: false, resize: false, color: entry.color })
       },
     }))
 

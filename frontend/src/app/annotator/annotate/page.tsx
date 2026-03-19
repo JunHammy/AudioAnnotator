@@ -439,6 +439,10 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
     save,
     setEmotion,
     toggleAmbiguous: () => setIsAmbiguous(prev => !prev),
+    updateTimes: (start: number, end: number) => {
+      setStartTime(start)
+      setEndTime(end)
+    },
   }))
 
   const handleDelete = async () => {
@@ -550,30 +554,35 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
         {type === "speaker" && (
           <>
             {/* Time inputs */}
-            <HStack gap={2}>
-              <Field.Root>
-                <Field.Label fontSize="xs">Start (s)</Field.Label>
-                <Input
-                  size="sm"
-                  type="number"
-                  step={0.001}
-                  min={0}
-                  value={startTime}
-                  onChange={e => setStartTime(parseFloat(e.target.value) || 0)}
-                />
-              </Field.Root>
-              <Field.Root>
-                <Field.Label fontSize="xs">End (s)</Field.Label>
-                <Input
-                  size="sm"
-                  type="number"
-                  step={0.001}
-                  min={0}
-                  value={endTime}
-                  onChange={e => setEndTime(parseFloat(e.target.value) || 0)}
-                />
-              </Field.Root>
-            </HStack>
+            <Box>
+              <HStack gap={2}>
+                <Field.Root>
+                  <Field.Label fontSize="xs">Start (s)</Field.Label>
+                  <Input
+                    size="sm"
+                    type="number"
+                    step={0.001}
+                    min={0}
+                    value={startTime}
+                    onChange={e => setStartTime(parseFloat(e.target.value) || 0)}
+                  />
+                </Field.Root>
+                <Field.Root>
+                  <Field.Label fontSize="xs">End (s)</Field.Label>
+                  <Input
+                    size="sm"
+                    type="number"
+                    step={0.001}
+                    min={0}
+                    value={endTime}
+                    onChange={e => setEndTime(parseFloat(e.target.value) || 0)}
+                  />
+                </Field.Root>
+              </HStack>
+              <Text fontSize="10px" color="fg.subtle" mt={1}>
+                💡 Drag the highlighted region on the waveform to adjust times
+              </Text>
+            </Box>
 
             <Field.Root>
               <Field.Label fontSize="xs">Speaker Label</Field.Label>
@@ -1157,28 +1166,29 @@ function AnnotateInner() {
     }
   }, [waveformReady, data, isSpeakerAnnotator])
 
-  // Debounced handler for region drag/resize — PATCHes segment times then reloads
+  // Region drag/resize on waveform — update the open SegmentEditor's time fields (no auto-save)
   const handleRegionUpdate = useCallback(
     (id: string, start: number, end: number) => {
-      clearTimeout(regionTimers.current[id])
-      regionTimers.current[id] = setTimeout(async () => {
-        const segId = parseInt(id, 10)
-        const seg = data?.speaker_segments.find(s => s.id === segId)
-        if (!seg) return
-        try {
-          await api.patch(`/api/segments/speaker/${segId}`, {
-            start_time: parseFloat(start.toFixed(3)),
-            end_time: parseFloat(end.toFixed(3)),
-            updated_at: seg.updated_at,
-          })
-          await load()
-        } catch {
-          ToastWizard.standard("warning", "Failed to save region drag — reload and retry")
-        }
-      }, 600)
+      editorRef.current?.updateTimes(
+        parseFloat(start.toFixed(3)),
+        parseFloat(end.toFixed(3)),
+      )
     },
-    [data, load],
+    [],
   )
+
+  // Activate the selected segment's waveform region so it becomes resizable;
+  // deactivate the previous one.
+  const prevActiveRegionId = useRef<string | null>(null)
+  useEffect(() => {
+    const prevId = prevActiveRegionId.current
+    const nextId = selection?.type === "speaker" ? String(selection.segment.id) : null
+
+    if (prevId && prevId !== nextId) playerRef.current?.deactivateRegion(prevId)
+    if (nextId) playerRef.current?.activateRegion(nextId)
+
+    prevActiveRegionId.current = nextId
+  }, [selection])
 
   const handleSaved = (type: SelectionType, updated: Segment | TranscriptSegment, previous?: Segment | TranscriptSegment) => {
     // Push undo entry (skip when undo itself calls handleSaved)
