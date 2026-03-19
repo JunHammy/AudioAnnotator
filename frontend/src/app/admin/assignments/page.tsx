@@ -1,21 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Badge,
   Box,
   Button,
+  Checkbox,
+  Dialog,
   Flex,
   Heading,
   HStack,
   IconButton,
+  Input,
+  Progress,
   Select,
   Table,
   Text,
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Lock, Plus, Trash2, Unlock } from "lucide-react";
+import { AlertTriangle, Lock, Plus, Trash2, Unlock, Users } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -100,6 +104,16 @@ export default function AssignTasksPage() {
   const [newAnnotatorId, setNewAnnotatorId] = useState<string[]>([]);
   const [newComboLabel,  setNewComboLabel]  = useState<string[]>([]);
 
+  // Bulk assignment modal state
+  const [bulkOpen,          setBulkOpen]          = useState(false);
+  const [bulkSearch,        setBulkSearch]        = useState("");
+  const [bulkSelected,      setBulkSelected]      = useState<Set<number>>(new Set());
+  const [bulkAnnotatorId,   setBulkAnnotatorId]   = useState<string[]>([]);
+  const [bulkComboLabel,    setBulkComboLabel]    = useState<string[]>([]);
+  const [bulkSaving,        setBulkSaving]        = useState(false);
+  const [bulkProgress,      setBulkProgress]      = useState<{ done: number; total: number; errors: string[] } | null>(null);
+  const bulkAbort = useRef(false);
+
   useEffect(() => {
     Promise.all([api.get("/api/audio-files/"), api.get("/api/users/")])
       .then(([af, u]) => {
@@ -124,6 +138,69 @@ export default function AssignTasksPage() {
       .filter((u) => !groupedAssignments.has(u.id))
       .map((u) => ({ label: u.username, value: String(u.id) })),
   });
+
+  // ── Bulk assignment derived values ──────────────────────────────────────────
+  const bulkCombo = VALID_COMBOS.find(c => c.label === bulkComboLabel[0]);
+  const bulkTasks = bulkCombo ? [...bulkCombo.tasks] : [];
+
+  const bulkAnnotatorOptions = useMemo(() => createListCollection({
+    items: annotators.map(u => ({ label: u.username, value: String(u.id) })),
+  }), [annotators]);
+
+  const filteredFiles = useMemo(() => {
+    const q = bulkSearch.trim().toLowerCase();
+    return q ? audioFiles.filter(f => f.filename.toLowerCase().includes(q)) : audioFiles;
+  }, [audioFiles, bulkSearch]);
+
+  function resetBulk() {
+    setBulkSearch("");
+    setBulkSelected(new Set());
+    setBulkAnnotatorId([]);
+    setBulkComboLabel([]);
+    setBulkProgress(null);
+    bulkAbort.current = false;
+  }
+
+  async function runBulkAssign() {
+    if (!bulkAnnotatorId[0] || bulkTasks.length === 0 || bulkSelected.size === 0) return;
+    const annotatorId = parseInt(bulkAnnotatorId[0], 10);
+    const fileIds = [...bulkSelected];
+    setBulkSaving(true);
+    bulkAbort.current = false;
+    setBulkProgress({ done: 0, total: fileIds.length, errors: [] });
+
+    const errors: string[] = [];
+    for (let i = 0; i < fileIds.length; i++) {
+      if (bulkAbort.current) break;
+      const fileId = fileIds[i];
+      try {
+        await api.post("/api/assignments/batch", {
+          audio_file_id: fileId,
+          annotator_id: annotatorId,
+          task_types: bulkTasks,
+        });
+      } catch (err: unknown) {
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        const fname = audioFiles.find(f => f.id === fileId)?.filename ?? `file_${fileId}`;
+        errors.push(`${fname}: ${detail ?? "failed"}`);
+      }
+      setBulkProgress({ done: i + 1, total: fileIds.length, errors: [...errors] });
+    }
+
+    setBulkSaving(false);
+    // Refresh the selected single-file assignments in case one of the bulk files is selected
+    if (selectedFile && bulkSelected.has(selectedFile.id)) {
+      const fresh = await api.get(`/api/assignments/?audio_file_id=${selectedFile.id}`);
+      setAssignments(fresh.data);
+    }
+    const succeeded = fileIds.length - errors.length;
+    ToastWizard.standard(
+      errors.length === 0 ? "success" : "warning",
+      `Bulk assign complete`,
+      `${succeeded} succeeded, ${errors.length} skipped/failed.`,
+      4000, true,
+    );
+  }
 
   // Derive selected combo's task list
   const selectedCombo = VALID_COMBOS.find(c => c.label === newComboLabel[0]);
@@ -202,7 +279,13 @@ export default function AssignTasksPage() {
 
   return (
     <Box p={8} h="full">
-      <Heading size="lg" color="fg" mb={1}>Assign Tasks</Heading>
+      <HStack mb={1} justify="space-between" align="flex-start">
+        <Heading size="lg" color="fg">Assign Tasks</Heading>
+        <Button size="sm" colorPalette="teal" variant="outline" onClick={() => { resetBulk(); setBulkOpen(true); }}>
+          <Users size={14} />
+          Bulk Assign
+        </Button>
+      </HStack>
       <Text color="fg.muted" mb={6}>Select a file to manage its annotator assignments</Text>
 
       {loading ? (
@@ -487,6 +570,232 @@ export default function AssignTasksPage() {
           )}
         </Flex>
       )}
+
+      {/* ── Bulk Assign Modal ─────────────────────────────────────────────────── */}
+      <Dialog.Root
+        open={bulkOpen}
+        onOpenChange={({ open }) => {
+          if (!bulkSaving) { setBulkOpen(open); if (!open) resetBulk(); }
+        }}
+        size="xl"
+      >
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="760px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Bulk Assign Tasks</Dialog.Title>
+            </Dialog.Header>
+
+            <Dialog.Body pt={4} pb={2}>
+              <Flex gap={5} align="start" minH="420px">
+
+                {/* ── Left: file selection ── */}
+                <Box flex={1} minW={0}>
+                  <HStack mb={2} justify="space-between">
+                    <Text fontSize="xs" fontWeight="semibold" color="fg">
+                      Files ({bulkSelected.size} / {audioFiles.length} selected)
+                    </Text>
+                    <HStack gap={2}>
+                      <Button size="xs" variant="ghost" colorPalette="blue"
+                        onClick={() => setBulkSelected(new Set(filteredFiles.map(f => f.id)))}>
+                        Select all
+                      </Button>
+                      <Button size="xs" variant="ghost" colorPalette="gray"
+                        onClick={() => setBulkSelected(new Set())}>
+                        Clear
+                      </Button>
+                    </HStack>
+                  </HStack>
+
+                  <Input
+                    size="sm" placeholder="Search files…" mb={2}
+                    value={bulkSearch} onChange={e => setBulkSearch(e.target.value)}
+                    bg="bg.muted" borderColor="border" color="fg"
+                  />
+
+                  <Box
+                    borderWidth="1px" borderColor="border" rounded="md" overflow="auto"
+                    maxH="340px"
+                    css={{
+                      "&::-webkit-scrollbar": { width: "4px" },
+                      "&::-webkit-scrollbar-thumb": { background: "#4a4c54", borderRadius: "999px" },
+                    }}
+                  >
+                    {filteredFiles.length === 0 ? (
+                      <Box px={3} py={6} textAlign="center">
+                        <Text fontSize="xs" color="fg.muted">No files match.</Text>
+                      </Box>
+                    ) : filteredFiles.map(f => {
+                      const checked = bulkSelected.has(f.id);
+                      return (
+                        <HStack
+                          key={f.id}
+                          px={3} py={2} gap={3} cursor="pointer"
+                          bg={checked ? "blue.900" : "transparent"}
+                          borderBottomWidth="1px" borderColor="border"
+                          _hover={{ bg: checked ? "blue.900" : "bg.muted" }}
+                          onClick={() => setBulkSelected(prev => {
+                            const next = new Set(prev);
+                            if (next.has(f.id)) next.delete(f.id); else next.add(f.id);
+                            return next;
+                          })}
+                        >
+                          <Checkbox.Root checked={checked} onCheckedChange={() => {}} size="sm" pointerEvents="none">
+                            <Checkbox.HiddenInput />
+                            <Checkbox.Control />
+                          </Checkbox.Root>
+                          <Box flex={1} minW={0}>
+                            <Text fontSize="xs" color="fg" fontFamily="mono" truncate>{f.filename}</Text>
+                            <Text fontSize="10px" color="fg.muted">{f.language ?? "—"} · {f.num_speakers ?? "?"}spk</Text>
+                          </Box>
+                        </HStack>
+                      );
+                    })}
+                  </Box>
+                </Box>
+
+                {/* ── Right: annotator + combo ── */}
+                <Box w="220px" flexShrink={0}>
+                  <Text fontSize="xs" fontWeight="semibold" color="fg" mb={3}>Assignment Settings</Text>
+
+                  <Box mb={4}>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Annotator</Text>
+                    <Select.Root
+                      collection={bulkAnnotatorOptions}
+                      value={bulkAnnotatorId}
+                      onValueChange={d => setBulkAnnotatorId(d.value)}
+                      size="sm"
+                    >
+                      <Select.HiddenSelect />
+                      <Select.Control>
+                        <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
+                          <Select.ValueText placeholder="Select annotator…" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Portal>
+                        <Select.Positioner>
+                          <Select.Content bg="bg.subtle" borderColor="border">
+                            {bulkAnnotatorOptions.items.map(item => (
+                              <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                                {item.label}
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Portal>
+                    </Select.Root>
+                  </Box>
+
+                  <Box mb={4}>
+                    <Text fontSize="xs" color="fg.muted" mb={1}>Task Combination</Text>
+                    <Select.Root
+                      collection={comboCollection}
+                      value={bulkComboLabel}
+                      onValueChange={d => setBulkComboLabel(d.value)}
+                      size="sm"
+                    >
+                      <Select.HiddenSelect />
+                      <Select.Control>
+                        <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
+                          <Select.ValueText placeholder="Select combo…" />
+                        </Select.Trigger>
+                      </Select.Control>
+                      <Portal>
+                        <Select.Positioner>
+                          <Select.Content bg="bg.subtle" borderColor="border">
+                            {comboCollection.items.map(item => (
+                              <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
+                                {item.label}
+                              </Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Portal>
+                    </Select.Root>
+                  </Box>
+
+                  {/* Summary */}
+                  {bulkSelected.size > 0 && bulkAnnotatorId[0] && bulkTasks.length > 0 && (
+                    <Box px={3} py={2} bg="teal.900" borderWidth="1px" borderColor="teal.700" rounded="md" mb={3}>
+                      <Text fontSize="xs" color="teal.300">
+                        Will assign <strong>{bulkTasks.join(" + ")}</strong> to{" "}
+                        <strong>{annotators.find(a => String(a.id) === bulkAnnotatorId[0])?.username}</strong>{" "}
+                        for <strong>{bulkSelected.size}</strong> file{bulkSelected.size !== 1 ? "s" : ""}.
+                      </Text>
+                      <Text fontSize="10px" color="teal.400" mt={1}>
+                        Existing assignments for this annotator + file will be skipped.
+                      </Text>
+                    </Box>
+                  )}
+
+                  {/* Emotion warning */}
+                  {bulkTasks.includes("emotion") && (
+                    <Flex align="center" gap={2} px={3} py={2} bg="orange.900" borderWidth="1px" borderColor="orange.700" rounded="md" mb={3}>
+                      <AlertTriangle size={13} color="var(--chakra-colors-orange-400)" />
+                      <Text fontSize="10px" color="orange.300">
+                        Emotion tasks will be created for all selected files. Ensure speaker is locked per file before annotators begin.
+                      </Text>
+                    </Flex>
+                  )}
+                </Box>
+              </Flex>
+
+              {/* Progress bar */}
+              {bulkProgress && (
+                <Box mt={4} borderTopWidth="1px" borderColor="border" pt={3}>
+                  <HStack mb={1} justify="space-between">
+                    <Text fontSize="xs" color="fg.muted">
+                      {bulkProgress.done < bulkProgress.total
+                        ? `Processing ${bulkProgress.done} / ${bulkProgress.total}…`
+                        : `Done — ${bulkProgress.total - bulkProgress.errors.length} succeeded, ${bulkProgress.errors.length} skipped/failed`}
+                    </Text>
+                    {bulkSaving && (
+                      <Button size="xs" colorPalette="red" variant="ghost"
+                        onClick={() => { bulkAbort.current = true; }}>
+                        Cancel
+                      </Button>
+                    )}
+                  </HStack>
+                  <Progress.Root
+                    value={bulkProgress.total > 0 ? (bulkProgress.done / bulkProgress.total) * 100 : 0}
+                    size="sm" colorPalette={bulkProgress.errors.length > 0 ? "orange" : "teal"}
+                  >
+                    <Progress.Track rounded="full">
+                      <Progress.Range />
+                    </Progress.Track>
+                  </Progress.Root>
+                  {bulkProgress.errors.length > 0 && (
+                    <Box mt={2} maxH="80px" overflowY="auto">
+                      {bulkProgress.errors.map((e, i) => (
+                        <Text key={i} fontSize="10px" color="orange.300">{e}</Text>
+                      ))}
+                    </Box>
+                  )}
+                </Box>
+              )}
+            </Dialog.Body>
+
+            <Dialog.Footer borderTopWidth="1px" borderColor="border" pt={3} gap={2}>
+              <Button
+                size="sm" variant="ghost"
+                disabled={bulkSaving}
+                onClick={() => { setBulkOpen(false); resetBulk(); }}
+              >
+                {bulkProgress && !bulkSaving ? "Close" : "Cancel"}
+              </Button>
+              <Button
+                size="sm" colorPalette="teal"
+                loading={bulkSaving}
+                disabled={bulkSelected.size === 0 || !bulkAnnotatorId[0] || bulkTasks.length === 0 || (bulkProgress !== null && !bulkSaving)}
+                onClick={runBulkAssign}
+              >
+                <Users size={14} />
+                Assign to {bulkSelected.size} file{bulkSelected.size !== 1 ? "s" : ""}
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
     </Box>
   );
 }
