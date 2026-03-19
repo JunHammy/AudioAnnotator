@@ -886,6 +886,7 @@ function AnnotateInner() {
   const [hasUpdates, setHasUpdates] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [segmentFilter, setSegmentFilter] = useState<"all" | "unannotated" | "ambiguous" | "has_notes">("all")
 
   const load = useCallback(async () => {
     if (!fileId) return
@@ -1040,17 +1041,33 @@ function AnnotateInner() {
     return grouped
   }, [data])
 
-  // Open all speaker accordions when file loads
+  // Open all speaker accordions when file loads; restore session state if available
   useEffect(() => {
     if (!data) return
     const labels = [...new Set(data.speaker_segments.map(s => s.speaker_label ?? "__null__"))]
-    setOpenAccordions(new Set(labels))
+    const sessionKey = `annotate_${data.audio_file.id}`
+    try {
+      const saved = sessionStorage.getItem(sessionKey)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (parsed.accordions) setOpenAccordions(new Set(parsed.accordions))
+        else setOpenAccordions(new Set(labels))
+        if (parsed.segmentFilter) setSegmentFilter(parsed.segmentFilter)
+      } else {
+        setOpenAccordions(new Set(labels))
+      }
+    } catch {
+      setOpenAccordions(new Set(labels))
+    }
   }, [data?.audio_file.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleAccordion = (key: string) => {
     setOpenAccordions(prev => {
       const next = new Set(prev)
       if (next.has(key)) next.delete(key); else next.add(key)
+      if (fileId) {
+        try { sessionStorage.setItem(`annotate_${fileId}`, JSON.stringify({ accordions: [...next], segmentFilter })) } catch {}
+      }
       return next
     })
   }
@@ -1395,6 +1412,25 @@ function AnnotateInner() {
   const audioUrl = `/api/audio-files/${fileId}/stream`
   const emotionGated = data.audio_file.emotion_gated
 
+  // Persist segmentFilter changes to sessionStorage
+  useEffect(() => {
+    if (!fileId) return
+    try {
+      const key = `annotate_${fileId}`
+      const existing = JSON.parse(sessionStorage.getItem(key) ?? "{}")
+      sessionStorage.setItem(key, JSON.stringify({ ...existing, segmentFilter }))
+    } catch {}
+  }, [segmentFilter, fileId])
+
+  const filteredEmotionSegments = useMemo(() => {
+    if (!data) return []
+    const segs = data.emotion_segments
+    if (segmentFilter === "unannotated") return segs.filter(s => s.emotion === null)
+    if (segmentFilter === "ambiguous") return segs.filter(s => s.is_ambiguous)
+    if (segmentFilter === "has_notes") return segs.filter(s => s.notes && s.notes.trim().length > 0)
+    return segs
+  }, [data, segmentFilter])
+
   return (
     <Box h="100%" display="flex" flexDir="column">
       {/* Emotion gate banner — only shown to annotators with an emotion task */}
@@ -1695,16 +1731,42 @@ function AnnotateInner() {
 
               {/* Emotion track — shown below all speaker sections */}
               {hasTask("emotion") && !emotionGated && (
-                <SegmentTrack
-                  label="Emotion (my annotations)"
-                  segments={data.emotion_segments}
-                  duration={duration}
-                  currentTime={currentTime}
-                  selectedId={selection?.type === "emotion" ? selection.segment.id : undefined}
-                  getColor={(s: Segment) => emotionColor(s.emotion)}
-                  getLabel={(s: Segment) => s.emotion ?? "—"}
-                  onSelect={s => setSelection({ type: "emotion", segment: s })}
-                />
+                <Box>
+                  {/* Filter chips */}
+                  <Flex gap={1.5} mb={2} align="center" flexWrap="wrap">
+                    {(["all", "unannotated", "ambiguous", "has_notes"] as const).map(f => {
+                      const label = f === "all" ? `All (${data.emotion_segments.length})`
+                        : f === "unannotated" ? `Unannotated (${data.emotion_segments.filter(s => s.emotion === null).length})`
+                        : f === "ambiguous" ? `Ambiguous (${data.emotion_segments.filter(s => s.is_ambiguous).length})`
+                        : `Has Notes (${data.emotion_segments.filter(s => s.notes?.trim()).length})`
+                      return (
+                        <Box
+                          key={f}
+                          as="button"
+                          px={2} py="2px" fontSize="10px" rounded="full" borderWidth="1px"
+                          borderColor={segmentFilter === f ? "blue.400" : "border"}
+                          bg={segmentFilter === f ? "blue.900" : "bg.muted"}
+                          color={segmentFilter === f ? "blue.300" : "fg.muted"}
+                          cursor="pointer"
+                          transition="all 0.1s"
+                          onClick={() => setSegmentFilter(f)}
+                        >
+                          {label}
+                        </Box>
+                      )
+                    })}
+                  </Flex>
+                  <SegmentTrack
+                    label="Emotion (my annotations)"
+                    segments={filteredEmotionSegments}
+                    duration={duration}
+                    currentTime={currentTime}
+                    selectedId={selection?.type === "emotion" ? selection.segment.id : undefined}
+                    getColor={(s: Segment) => emotionColor(s.emotion)}
+                    getLabel={(s: Segment) => s.emotion ?? "—"}
+                    onSelect={s => setSelection({ type: "emotion", segment: s })}
+                  />
+                </Box>
               )}
             </VStack>
           )}
