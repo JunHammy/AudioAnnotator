@@ -1445,6 +1445,25 @@ function AnnotateInner() {
     }
   }
 
+  // Persist segmentFilter changes to sessionStorage
+  useEffect(() => {
+    if (!fileId) return
+    try {
+      const key = `annotate_${fileId}`
+      const existing = JSON.parse(sessionStorage.getItem(key) ?? "{}")
+      sessionStorage.setItem(key, JSON.stringify({ ...existing, segmentFilter }))
+    } catch {}
+  }, [segmentFilter, fileId])
+
+  const filteredEmotionSegments = useMemo(() => {
+    if (!data) return []
+    const segs = data.emotion_segments
+    if (segmentFilter === "unannotated") return segs.filter(s => s.emotion === null)
+    if (segmentFilter === "ambiguous") return segs.filter(s => s.is_ambiguous)
+    if (segmentFilter === "has_notes") return segs.filter(s => s.notes && s.notes.trim().length > 0)
+    return segs
+  }, [data, segmentFilter])
+
   if (!fileId) {
     return (
       <Box p={8} textAlign="center" color="fg.muted">
@@ -1469,25 +1488,6 @@ function AnnotateInner() {
   const duration = data.audio_file.duration ?? waveformDuration
   const audioUrl = `/api/audio-files/${fileId}/stream`
   const emotionGated = data.audio_file.emotion_gated
-
-  // Persist segmentFilter changes to sessionStorage
-  useEffect(() => {
-    if (!fileId) return
-    try {
-      const key = `annotate_${fileId}`
-      const existing = JSON.parse(sessionStorage.getItem(key) ?? "{}")
-      sessionStorage.setItem(key, JSON.stringify({ ...existing, segmentFilter }))
-    } catch {}
-  }, [segmentFilter, fileId])
-
-  const filteredEmotionSegments = useMemo(() => {
-    if (!data) return []
-    const segs = data.emotion_segments
-    if (segmentFilter === "unannotated") return segs.filter(s => s.emotion === null)
-    if (segmentFilter === "ambiguous") return segs.filter(s => s.is_ambiguous)
-    if (segmentFilter === "has_notes") return segs.filter(s => s.notes && s.notes.trim().length > 0)
-    return segs
-  }, [data, segmentFilter])
 
   return (
     <Box h="100%" display="flex" flexDir="column">
