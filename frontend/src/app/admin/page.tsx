@@ -13,6 +13,10 @@ import {
   Text,
 } from "@chakra-ui/react";
 import { AlertTriangle, Database } from "lucide-react";
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip,
+  CartesianGrid, ResponsiveContainer,
+} from "recharts";
 import api from "@/lib/axios";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -25,6 +29,7 @@ interface DashboardData {
     flagged_segments: number;
     low_annotator_files: number;
   };
+  velocity: { date: string; count: number }[];
   recent_activity: {
     id: number;
     audio_file_id: number;
@@ -247,6 +252,75 @@ export default function AdminDashboard() {
                   )}
                 </Box>
               ))
+            )}
+          </Box>
+        </Box>
+      </Grid>
+
+      {/* Charts row */}
+      <Grid templateColumns="1fr 1fr" gap={6} mb={8}>
+        {/* Velocity line chart */}
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+          <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
+            <Text fontWeight="semibold" color="fg">Annotation Velocity</Text>
+            <Text fontSize="xs" color="fg.muted">Assignments completed per day (last 14 days)</Text>
+          </Box>
+          <Box px={4} py={4}>
+            {data.velocity.every(v => v.count === 0) ? (
+              <Flex h="140px" align="center" justify="center">
+                <Text fontSize="sm" color="fg.muted" fontStyle="italic">No completions in the last 14 days.</Text>
+              </Flex>
+            ) : (
+              <ResponsiveContainer width="100%" height={140}>
+                <LineChart data={data.velocity} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2c2e33" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: "#6b7280", fontSize: 10 }}
+                    tickFormatter={(d) => d.slice(5)}
+                    interval={2}
+                  />
+                  <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: "#25262b", border: "1px solid #373a40", borderRadius: 6, fontSize: 12 }}
+                    labelStyle={{ color: "#c1c2c5" }}
+                    itemStyle={{ color: "#60a5fa" }}
+                  />
+                  <Line type="monotone" dataKey="count" stroke="#60a5fa" strokeWidth={2} dot={false} name="Completed" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Box>
+        </Box>
+
+        {/* Annotator completion bar chart */}
+        <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+          <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
+            <Text fontWeight="semibold" color="fg">Annotator Progress</Text>
+            <Text fontSize="xs" color="fg.muted">Assignments assigned vs. completed</Text>
+          </Box>
+          <Box px={4} py={4}>
+            {data.annotator_summary.length === 0 ? (
+              <Flex h="140px" align="center" justify="center">
+                <Text fontSize="sm" color="fg.muted" fontStyle="italic">No annotators yet.</Text>
+              </Flex>
+            ) : (
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart
+                  data={data.annotator_summary.map(a => ({ name: a.username, Assigned: a.assigned, Completed: a.completed }))}
+                  margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2c2e33" />
+                  <XAxis dataKey="name" tick={{ fill: "#6b7280", fontSize: 10 }} />
+                  <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: "#25262b", border: "1px solid #373a40", borderRadius: 6, fontSize: 12 }}
+                    labelStyle={{ color: "#c1c2c5" }}
+                  />
+                  <Bar dataKey="Assigned" fill="#374151" radius={[3, 3, 0, 0]} />
+                  <Bar dataKey="Completed" fill="#10b981" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             )}
           </Box>
         </Box>

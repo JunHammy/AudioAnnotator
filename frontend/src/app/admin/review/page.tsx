@@ -7,7 +7,6 @@ import {
   Button,
   HStack,
   Heading,
-  Icon,
   IconButton,
   Input,
   Select,
@@ -192,6 +191,22 @@ function CollabSegmentRow({ seg, taskType }: { seg: CollabSegment; taskType: str
 
 // ─── Emotion Tab ─────────────────────────────────────────────────────────────
 
+interface IAAMetrics {
+  annotator_count: number
+  segment_count: number
+  annotated_count: number
+  percent_agreement: number | null
+  fleiss_kappa: number | null
+}
+
+function iaaColor(score: number | null): string {
+  if (score === null) return "gray"
+  if (score >= 0.8) return "green"
+  if (score >= 0.6) return "yellow"
+  if (score >= 0.4) return "orange"
+  return "red"
+}
+
 function EmotionTab({ fileId }: { fileId: number }) {
   const [segments, setSegments] = useState<EmotionSegmentReview[]>([])
   const [loading, setLoading] = useState(true)
@@ -201,9 +216,11 @@ function EmotionTab({ fileId }: { fileId: number }) {
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [batchSaving, setBatchSaving] = useState(false)
   const [overriding, setOverriding] = useState<Set<number>>(new Set())
+  const [iaa, setIaa] = useState<IAAMetrics | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
+    api.get(`/api/review/${fileId}/iaa`).then(r => setIaa(r.data)).catch(() => {})
     try {
       const res = await api.get(`/api/review/${fileId}/emotion`)
       setSegments(res.data)
@@ -296,6 +313,29 @@ function EmotionTab({ fileId }: { fileId: number }) {
 
   return (
     <VStack align="start" gap={4}>
+      {/* IAA metrics bar */}
+      {iaa && (
+        <HStack gap={3} px={3} py={2} bg="bg.muted" rounded="md" borderWidth="1px" borderColor="border" flexWrap="wrap">
+          <Text fontSize="xs" fontWeight="semibold" color="fg.muted">IAA</Text>
+          <Badge colorPalette="gray" size="sm">{iaa.annotator_count} annotators</Badge>
+          <Badge colorPalette="gray" size="sm">{iaa.annotated_count}/{iaa.segment_count} segs with ≥2 votes</Badge>
+          {iaa.percent_agreement !== null ? (
+            <Badge colorPalette={iaaColor(iaa.percent_agreement)} size="sm">
+              Agreement: {(iaa.percent_agreement * 100).toFixed(1)}%
+            </Badge>
+          ) : (
+            <Badge colorPalette="gray" size="sm">Agreement: —</Badge>
+          )}
+          {iaa.fleiss_kappa !== null ? (
+            <Badge colorPalette={iaaColor(iaa.fleiss_kappa)} size="sm">
+              κ = {iaa.fleiss_kappa.toFixed(3)}
+            </Badge>
+          ) : (
+            <Badge colorPalette="gray" size="sm" title="κ requires equal annotator count per segment">κ = —</Badge>
+          )}
+        </HStack>
+      )}
+
       {/* Stats + Bulk actions */}
       <HStack gap={4} flexWrap="wrap">
         <HStack gap={2}>

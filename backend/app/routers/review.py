@@ -5,6 +5,7 @@ Emotion:   3-tier resolution (Tier1=unanimous, Tier2≥0.65, Tier3=manual)
 Collab:    speaker / gender / transcription segments with edit history
 """
 from datetime import datetime, timezone
+from itertools import combinations as _combinations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -335,6 +336,89 @@ async def get_collaborative_review(
         "task_type": task_type,
         "locked": locked,
         "segments": segments_out,
+    }
+
+
+# ─── IAA metrics ──────────────────────────────────────────────────────────────
+
+@router.get("/{file_id}/iaa")
+async def get_iaa_metrics(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    """Compute Inter-Annotator Agreement for emotion labels on a file."""
+    rows = (await db.execute(
+        select(
+            SpeakerSegment.annotator_id,
+            SpeakerSegment.start_time,
+            SpeakerSegment.end_time,
+            SpeakerSegment.emotion,
+        )
+        .where(SpeakerSegment.audio_file_id == file_id)
+        .where(SpeakerSegment.source == "annotator")
+    )).fetchall()
+
+    seg_map: dict[tuple, dict[int, Optional[str]]] = {}
+    for annotator_id, start, end, emotion in rows:
+        key = (round(float(start), 3), round(float(end), 3))
+        seg_map.setdefault(key, {})[annotator_id] = emotion
+
+    all_annotators = {ann for labels in seg_map.values() for ann in labels}
+    multi = {k: v for k, v in seg_map.items() if len(v) >= 2}
+
+    if not multi:
+        return {
+            "file_id": file_id,
+            "annotator_count": len(all_annotators),
+            "segment_count": len(seg_map),
+            "annotated_count": 0,
+            "percent_agreement": None,
+            "fleiss_kappa": None,
+        }
+
+    # Pairwise percent agreement (averaged over all annotator pairs per segment)
+    pair_agreements: list[int] = []
+    for labels in multi.values():
+        ids = list(labels.keys())
+        for a1, a2 in _combinations(ids, 2):
+            pair_agreements.append(1 if labels[a1] == labels[a2] else 0)
+    percent_agreement = round(sum(pair_agreements) / len(pair_agreements), 3) if pair_agreements else None
+
+    # Fleiss' kappa (only when all multi-annotated segments have the same n raters)
+    n_vals = [len(v) for v in multi.values()]
+    fleiss_kappa = None
+    if len(set(n_vals)) == 1:
+        n = n_vals[0]
+        if n >= 2:
+            N = len(multi)
+            subjects = list(multi.values())
+            total_ratings = N * n
+            cat_counts: dict[str, int] = {}
+            for s in subjects:
+                for emotion in s.values():
+                    label = emotion or "None"
+                    cat_counts[label] = cat_counts.get(label, 0) + 1
+            P_e = sum((c / total_ratings) ** 2 for c in cat_counts.values())
+            P_i_list = []
+            for s in subjects:
+                n_ij: dict[str, int] = {}
+                for emotion in s.values():
+                    label = emotion or "None"
+                    n_ij[label] = n_ij.get(label, 0) + 1
+                P_i = sum(v * (v - 1) for v in n_ij.values()) / (n * (n - 1))
+                P_i_list.append(P_i)
+            P_bar = sum(P_i_list) / N
+            if P_e < 1:
+                fleiss_kappa = round((P_bar - P_e) / (1 - P_e), 3)
+
+    return {
+        "file_id": file_id,
+        "annotator_count": len(all_annotators),
+        "segment_count": len(seg_map),
+        "annotated_count": len(multi),
+        "percent_agreement": percent_agreement,
+        "fleiss_kappa": fleiss_kappa,
     }
 
 

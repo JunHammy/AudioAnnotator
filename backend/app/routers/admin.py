@@ -1,9 +1,10 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, distinct, select, case
+from sqlalchemy import cast, func, distinct, select, case, Date as SADate
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
@@ -191,6 +192,24 @@ async def get_dashboard(
         .order_by(User.username)
     )).all()
 
+    # ── Velocity: completed assignments per day, last 14 days ──────────────────
+    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
+    velocity_raw = (await db.execute(
+        select(
+            cast(Assignment.completed_at, SADate).label("day"),
+            func.count(Assignment.id).label("count"),
+        )
+        .where(Assignment.status == "completed")
+        .where(Assignment.completed_at >= cutoff)
+        .group_by(cast(Assignment.completed_at, SADate))
+    )).all()
+    velocity_map = {str(r.day): r.count for r in velocity_raw}
+    today = datetime.now(timezone.utc).date()
+    velocity = [
+        {"date": (today - timedelta(days=i)).isoformat(), "count": velocity_map.get((today - timedelta(days=i)).isoformat(), 0)}
+        for i in range(13, -1, -1)
+    ]
+
     return {
         "stats": {
             "total_files": total_files,
@@ -199,6 +218,7 @@ async def get_dashboard(
             "flagged_segments": flagged_count,
             "low_annotator_files": low_annotator_files,
         },
+        "velocity": velocity,
         "recent_activity": [
             {
                 "id": r.id,
