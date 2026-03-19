@@ -129,11 +129,15 @@ export default function AssignTasksPage() {
 
   // Audio preview state
   const [playingFileId,  setPlayingFileId]  = useState<number | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef   = useRef<HTMLAudioElement | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   // Archive state
   const [archiving,      setArchiving]      = useState<Set<number>>(new Set());
   const [showArchived,   setShowArchived]   = useState(false);
+
+  // File list search
+  const [fileSearch,     setFileSearch]     = useState("");
 
   // Bulk assignment modal state
   const [bulkOpen,          setBulkOpen]          = useState(false);
@@ -292,18 +296,30 @@ export default function AssignTasksPage() {
     }
   }
 
-  function togglePreview(fileId: number) {
+  async function togglePreview(fileId: number) {
+    // Stop any currently playing audio
+    audioRef.current?.pause();
+    audioRef.current = null;
+    if (blobUrlRef.current) { URL.revokeObjectURL(blobUrlRef.current); blobUrlRef.current = null; }
+
     if (playingFileId === fileId) {
-      audioRef.current?.pause();
-      audioRef.current = null;
       setPlayingFileId(null);
-    } else {
-      audioRef.current?.pause();
-      const a = new Audio(`/api/audio-files/${fileId}/stream`);
-      a.play().catch(() => {});
-      a.onended = () => setPlayingFileId(null);
+      return;
+    }
+    setPlayingFileId(fileId);
+    try {
+      // Fetch via axios so the JWT interceptor attaches Authorization header
+      const res = await api.get(`/api/audio-files/${fileId}/stream`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      blobUrlRef.current = url;
+      const a = new Audio(url);
+      a.onended = () => { setPlayingFileId(null); URL.revokeObjectURL(url); blobUrlRef.current = null; };
+      a.onerror = () => { setPlayingFileId(null); };
+      a.play().catch(() => setPlayingFileId(null));
       audioRef.current = a;
-      setPlayingFileId(fileId);
+    } catch {
+      setPlayingFileId(null);
+      ToastWizard.standard("error", "Preview failed", "Could not load audio.", 3000, true);
     }
   }
 
@@ -433,11 +449,20 @@ export default function AssignTasksPage() {
             h="full"
           >
             <Box px={4} py={3} borderBottomWidth="1px" borderColor="border">
-              <Text fontSize="sm" fontWeight="semibold" color="fg">Audio Files ({audioFiles.length})</Text>
+              <Text fontSize="sm" fontWeight="semibold" color="fg" mb={2}>Audio Files ({audioFiles.length})</Text>
+              <Input
+                size="xs"
+                placeholder="Search files…"
+                value={fileSearch}
+                onChange={e => setFileSearch(e.target.value)}
+                bg="bg.muted"
+                borderColor="border"
+                color="fg"
+              />
             </Box>
             <Box
               overflow="auto"
-              h="calc(100% - 48px)"
+              h="calc(100% - 80px)"
               css={{
                 "&::-webkit-scrollbar": { width: "5px" },
                 "&::-webkit-scrollbar-track": { background: "transparent" },
@@ -445,7 +470,7 @@ export default function AssignTasksPage() {
                 "&::-webkit-scrollbar-thumb:hover": { background: "#5c5f6b" },
               }}
             >
-              {audioFiles.map((af) => {
+              {audioFiles.filter(af => !fileSearch || af.filename.toLowerCase().includes(fileSearch.toLowerCase())).map((af) => {
                 const isSelected = selectedFile?.id === af.id;
                 return (
                   <Box

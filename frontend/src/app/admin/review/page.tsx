@@ -700,6 +700,7 @@ export default function ReviewFinalizePage() {
   const [selectedFile, setSelectedFile] = useState<ReviewFile | null>(null)
   const [responseText, setResponseText] = useState("")
   const [savingResponse, setSavingResponse] = useState(false)
+  const [fileSearch, setFileSearch] = useState("")
 
   const loadFiles = useCallback(async () => {
     try {
@@ -764,7 +765,7 @@ export default function ReviewFinalizePage() {
           "&::-webkit-scrollbar-thumb:hover": { background: "#5c5f6b" },
         }}
       >
-        <HStack mb={3} justify="space-between" align="center">
+        <HStack mb={2} justify="space-between" align="center">
           <Heading size="sm" color="fg.muted">Audio Files</Heading>
           {(() => {
             const warn = files.filter(f => f.emotion_annotators > 0 && f.emotion_annotators < 2).length
@@ -775,11 +776,21 @@ export default function ReviewFinalizePage() {
             ) : null
           })()}
         </HStack>
+        <Input
+          size="xs"
+          placeholder="Search files…"
+          value={fileSearch}
+          onChange={e => setFileSearch(e.target.value)}
+          bg="bg.muted"
+          borderColor="border"
+          color="fg"
+          mb={2}
+        />
         {loadingFiles ? (
           <Spinner size="sm" />
         ) : (
           <VStack align="stretch" gap={1}>
-            {files.map(f => {
+            {files.filter(f => !fileSearch || f.filename.toLowerCase().includes(fileSearch.toLowerCase())).map(f => {
               const pct = f.total_segments
                 ? Math.round((f.finalized_emotions / f.total_segments) * 100)
                 : 0

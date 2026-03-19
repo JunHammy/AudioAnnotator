@@ -1720,33 +1720,35 @@ function AnnotateInner() {
                 ))}
               </Box>
             )}
-            {/* Color legend */}
-            <HStack gap={4} mt={2} flexWrap="wrap">
-              {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (
-                <HStack gap={2} flexWrap="wrap">
-                  {Object.entries(SPEAKER_COLORS).map(([label, color]) => (
-                    <HStack key={label} gap={1}>
-                      <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
-                      <Text fontSize="9px" color="fg.muted">{label}</Text>
+            {/* Color legend — single scrollable row so it never grows the sticky area */}
+            <Box overflowX="auto" mt={2}>
+              <HStack gap={4} flexWrap="nowrap" minW="max-content">
+                {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (
+                  <HStack gap={2} flexWrap="nowrap">
+                    {Object.entries(SPEAKER_COLORS).map(([label, color]) => (
+                      <HStack key={label} gap={1} flexShrink={0}>
+                        <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
+                        <Text fontSize="9px" color="fg.muted">{label}</Text>
+                      </HStack>
+                    ))}
+                    <HStack gap={1} flexShrink={0}>
+                      <Box w="8px" h="8px" rounded="full" bg="#6b7280" flexShrink={0} />
+                      <Text fontSize="9px" color="fg.muted">unknown</Text>
                     </HStack>
-                  ))}
-                  <HStack gap={1}>
-                    <Box w="8px" h="8px" rounded="full" bg="#6b7280" flexShrink={0} />
-                    <Text fontSize="9px" color="fg.muted">unknown</Text>
                   </HStack>
-                </HStack>
-              )}
-              {hasTask("emotion") && (
-                <HStack gap={2} flexWrap="wrap">
-                  {Object.entries(EMOTION_COLORS).map(([emo, color]) => (
-                    <HStack key={emo} gap={1}>
-                      <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
-                      <Text fontSize="9px" color="fg.muted">{emo}</Text>
-                    </HStack>
-                  ))}
-                </HStack>
-              )}
-            </HStack>
+                )}
+                {hasTask("emotion") && (
+                  <HStack gap={2} flexWrap="nowrap">
+                    {Object.entries(EMOTION_COLORS).map(([emo, color]) => (
+                      <HStack key={emo} gap={1} flexShrink={0}>
+                        <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
+                        <Text fontSize="9px" color="fg.muted">{emo}</Text>
+                      </HStack>
+                    ))}
+                  </HStack>
+                )}
+              </HStack>
+            </Box>
           </Box>
 
           {/* ── Scrollable bottom: speaker accordions + emotion + remarks ── */}
@@ -1922,16 +1924,6 @@ function AnnotateInner() {
               )}
             </VStack>
           )}
-
-          {/* Emotion colour legend */}
-          <HStack gap={4} flexWrap="wrap" pt={2}>
-            {Object.entries(EMOTION_COLORS).map(([e, c]) => (
-              <HStack key={e} gap={1}>
-                <Box w="10px" h="10px" rounded="full" bg={c} flexShrink={0} />
-                <Text fontSize="xs" color="fg.muted">{e}</Text>
-              </HStack>
-            ))}
-          </HStack>
 
           {/* Remarks + admin response */}
           <Box borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">

@@ -8,6 +8,7 @@ import {
   Flex,
   Grid,
   Heading,
+  Input,
   Table,
   Text,
 } from "@chakra-ui/react";
@@ -87,6 +88,7 @@ export default function AnnotatorTasksPage() {
   const [emotionProgress, setEmotionProgress] = useState<Record<number, EmotionProgress>>({});
   const [loading,        setLoading]        = useState(true);
   const [filter,         setFilter]         = useState<"all" | "pending" | "in_progress" | "completed">("all");
+  const [search,         setSearch]         = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -116,9 +118,9 @@ export default function AnnotatorTasksPage() {
     pending:     assignments.filter((a) => a.status === "pending").length,
   };
 
-  const filtered = filter === "all"
-    ? assignments
-    : assignments.filter((a) => a.status === filter);
+  const filtered = assignments
+    .filter(a => filter === "all" || a.status === filter)
+    .filter(a => !search || (filenameMap[a.audio_file_id] ?? "").toLowerCase().includes(search.toLowerCase()));
 
   // Group tasks by audio file to show combined task types per row
   const groupedRaw = new Map<number, Assignment[]>();
@@ -157,8 +159,8 @@ export default function AnnotatorTasksPage() {
         <StatCard label="Pending"     value={stats.pending}     color="fg.muted" />
       </Grid>
 
-      {/* Filter bar */}
-      <Flex gap={2} mb={4}>
+      {/* Filter bar + search */}
+      <Flex gap={2} mb={4} align="center" flexWrap="wrap">
         {FILTERS.map((f) => (
           <Button
             key={f}
@@ -170,6 +172,17 @@ export default function AnnotatorTasksPage() {
             {f === "all" ? "All" : f.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase())}
           </Button>
         ))}
+        <Input
+          size="sm"
+          placeholder="Search by filename…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          maxW="220px"
+          ml="auto"
+          bg="bg.subtle"
+          borderColor="border"
+          color="fg"
+        />
       </Flex>
 
       {/* Task table */}
