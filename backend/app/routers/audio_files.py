@@ -373,7 +373,7 @@ async def stream_audio(
             select(Assignment).where(
                 Assignment.audio_file_id == file_id,
                 Assignment.annotator_id == current_user.id,
-            )
+            ).limit(1)
         )
         if not assigned.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="Not assigned to this file")
