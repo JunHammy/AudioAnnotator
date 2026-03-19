@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
+from app.services.audit import write_audit_log
 from app.models.models import (
     AudioFile,
     FinalAnnotation,
@@ -210,6 +211,8 @@ async def decide_emotion(
         ))
 
     await db.flush()
+    await write_audit_log(db, admin.id, "finalize_emotion", "speaker_segment", body.segment_id,
+                          {"file_id": file_id, "emotion": body.emotion, "method": body.decision_method})
     return {"segment_id": body.segment_id, "emotion": body.emotion, "method": body.decision_method}
 
 
@@ -253,6 +256,10 @@ async def decide_emotion_batch(
         accepted += 1
 
     await db.flush()
+    await write_audit_log(db, admin.id, "finalize_emotion_batch", "audio_file", file_id,
+                          {"accepted": accepted,
+                           "segment_ids": [d.segment_id for d in body.decisions],
+                           "emotions": {str(d.segment_id): d.emotion for d in body.decisions}})
     return {"accepted": accepted}
 
 
