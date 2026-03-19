@@ -26,6 +26,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Database,
+  Download,
   FileAudio2,
   Lock,
   Plus,
@@ -36,7 +37,7 @@ import {
   Upload,
   X,
 } from "lucide-react"
-import api from "@/lib/axios"
+import api, { downloadExport } from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -399,6 +400,28 @@ export default function DatasetDetailPage() {
           <Button size="sm" variant="outline" onClick={load} loading={loading}>
             <RefreshCw size={14} /> Refresh
           </Button>
+          {!isUnassigned && datasetId != null && (
+            <>
+              <Button
+                size="sm" variant="outline" colorPalette="green"
+                onClick={async () => {
+                  try { await downloadExport(`/api/export/dataset/${datasetId}?format=json`, `dataset_${datasetId}_export.zip`) }
+                  catch { ToastWizard.standard("error", "Export failed") }
+                }}
+              >
+                <Download size={14} /> Export (JSON)
+              </Button>
+              <Button
+                size="sm" variant="outline" colorPalette="green"
+                onClick={async () => {
+                  try { await downloadExport(`/api/export/dataset/${datasetId}?format=csv`, `dataset_${datasetId}_export.zip`) }
+                  catch { ToastWizard.standard("error", "Export failed") }
+                }}
+              >
+                <Download size={14} /> Export (CSV)
+              </Button>
+            </>
+          )}
           {!isUnassigned && (
             <Button size="sm" variant="outline" colorPalette="blue" onClick={() => { setSelectedToAdd(new Set()); setAddOpen(true) }}>
               <Plus size={14} /> Add Files

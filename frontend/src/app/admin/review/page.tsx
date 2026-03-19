@@ -23,10 +23,11 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Download,
   Lock,
   Unlock,
 } from "lucide-react"
-import api from "@/lib/axios"
+import api, { downloadExport } from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -698,7 +699,7 @@ export default function ReviewFinalizePage() {
           </Box>
         ) : (
           <VStack align="start" gap={6}>
-            <HStack justify="space-between" w="full">
+            <HStack justify="space-between" w="full" align="start">
               <Box>
                 <Heading size="md" color="fg">
                   {selectedFile.filename}
@@ -717,6 +718,33 @@ export default function ReviewFinalizePage() {
                   </Text>
                 </HStack>
               </Box>
+              {/* Export buttons */}
+              <HStack gap={2} flexShrink={0}>
+                <Button
+                  size="sm" variant="outline" colorPalette="green"
+                  onClick={async () => {
+                    try {
+                      await downloadExport(`/api/export/file/${selectedFile.id}?format=json`, `${selectedFile.filename}.json`)
+                    } catch {
+                      ToastWizard.standard("error", "Export failed")
+                    }
+                  }}
+                >
+                  <Download size={14} /> JSON
+                </Button>
+                <Button
+                  size="sm" variant="outline" colorPalette="green"
+                  onClick={async () => {
+                    try {
+                      await downloadExport(`/api/export/file/${selectedFile.id}?format=csv`, `${selectedFile.filename}_export.zip`)
+                    } catch {
+                      ToastWizard.standard("error", "Export failed")
+                    }
+                  }}
+                >
+                  <Download size={14} /> CSV
+                </Button>
+              </HStack>
             </HStack>
 
             {selectedFile.annotator_remarks && (

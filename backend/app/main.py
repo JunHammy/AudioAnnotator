@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import admin, auth, users, audio_files, assignments, segments, review, datasets
+from app.routers import admin, auth, users, audio_files, assignments, segments, review, datasets, export
 
 app = FastAPI(
     title="AudioAnnotator API",
@@ -27,6 +27,7 @@ app.include_router(assignments.router, prefix="/api/assignments", tags=["assignm
 app.include_router(segments.router, prefix="/api/segments", tags=["segments"])
 app.include_router(review.router, prefix="/api/review", tags=["review"])
 app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
+app.include_router(export.router, prefix="/api/export", tags=["export"])
 
 
 @app.get("/api/health")
