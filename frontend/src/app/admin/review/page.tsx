@@ -27,8 +27,10 @@ import {
   Download,
   Lock,
   MessageSquare,
+  Pencil,
   Send,
   Unlock,
+  X,
 } from "lucide-react"
 import api, { downloadExport } from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -197,6 +199,7 @@ function EmotionTab({ fileId }: { fileId: number }) {
   const [decisionOthers, setDecisionOthers] = useState<Record<number, string>>({})
   const [saving, setSaving] = useState<Record<number, boolean>>({})
   const [batchSaving, setBatchSaving] = useState(false)
+  const [overriding, setOverriding] = useState<Set<number>>(new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -436,8 +439,8 @@ function EmotionTab({ fileId }: { fileId: number }) {
                   </VStack>
                 </Table.Cell>
                 <Table.Cell>
-                  {seg.finalized ? (
-                    <VStack align="start" gap={0}>
+                  {seg.finalized && !overriding.has(seg.segment_id) ? (
+                    <VStack align="start" gap={1}>
                       <HStack gap={1}>
                         <CheckCircle size={14} color="green" />
                         <Text fontSize="xs" color="green.400">
@@ -447,6 +450,73 @@ function EmotionTab({ fileId }: { fileId: number }) {
                         </Text>
                       </HStack>
                       <Text fontSize="9px" color="fg.muted">{seg.final_method}</Text>
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="orange"
+                        onClick={() => setOverriding(prev => new Set(prev).add(seg.segment_id))}
+                        title="Override finalized emotion"
+                      >
+                        <Pencil size={10} />
+                        Override
+                      </Button>
+                    </VStack>
+                  ) : overriding.has(seg.segment_id) ? (
+                    <VStack align="stretch" gap={1}>
+                      <Select.Root
+                        collection={emotionCollection}
+                        size="xs"
+                        value={decisions[seg.segment_id] ? [decisions[seg.segment_id]] : []}
+                        onValueChange={({ value }) =>
+                          setDecisions(d => ({ ...d, [seg.segment_id]: value[0] }))
+                        }
+                      >
+                        <Select.Trigger>
+                          <Select.ValueText placeholder="Select…" />
+                        </Select.Trigger>
+                        <Select.Positioner>
+                          <Select.Content>
+                            {emotionCollection.items.map(item => (
+                              <Select.Item key={item.value} item={item}>{item.label}</Select.Item>
+                            ))}
+                          </Select.Content>
+                        </Select.Positioner>
+                      </Select.Root>
+                      {decisions[seg.segment_id] === "Other" && (
+                        <Input
+                          size="xs"
+                          placeholder="Specify emotion…"
+                          value={decisionOthers[seg.segment_id] ?? ""}
+                          onChange={e =>
+                            setDecisionOthers(d => ({ ...d, [seg.segment_id]: e.target.value }))
+                          }
+                        />
+                      )}
+                      <HStack gap={1}>
+                        <Button
+                          size="xs"
+                          colorPalette="orange"
+                          loading={saving[seg.segment_id]}
+                          disabled={
+                            !decisions[seg.segment_id] ||
+                            (decisions[seg.segment_id] === "Other" && !decisionOthers[seg.segment_id])
+                          }
+                          onClick={async () => {
+                            await saveDecision(seg.segment_id, "manual_override")
+                            setOverriding(prev => { const s = new Set(prev); s.delete(seg.segment_id); return s })
+                          }}
+                        >
+                          Save
+                        </Button>
+                        <IconButton
+                          aria-label="Cancel override"
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setOverriding(prev => { const s = new Set(prev); s.delete(seg.segment_id); return s })}
+                        >
+                          <X size={12} />
+                        </IconButton>
+                      </HStack>
                     </VStack>
                   ) : (
                     <Button

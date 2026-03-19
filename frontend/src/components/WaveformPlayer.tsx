@@ -15,6 +15,8 @@ import {
   SkipBack,
   Volume2,
   VolumeX,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react"
 import api from "@/lib/axios"
 
@@ -36,6 +38,11 @@ interface Props {
   height?: number
 }
 
+const SPEED_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
+const ZOOM_MIN = 50
+const ZOOM_MAX = 400
+const ZOOM_STEP = 50
+
 function fmtTime(t: number): string {
   const m = Math.floor(t / 60)
   const s = Math.floor(t % 60)
@@ -53,6 +60,8 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     const [duration, setDuration] = useState(0)
     const [ready, setReady] = useState(false)
     const [muted, setMuted] = useState(false)
+    const [speed, setSpeedState] = useState(1)
+    const [zoom, setZoomState] = useState(ZOOM_MIN)
 
     useEffect(() => { onRegionUpdateRef.current = onRegionUpdate }, [onRegionUpdate])
 
@@ -60,16 +69,12 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       if (!containerRef.current) return
       let ws: any
       let blobUrl: string | null = null
-      // Prevents the async init from completing after React StrictMode's
-      // first-pass cleanup fires — which would leave a zombie WaveSurfer instance
-      // appended to the container and result in two visible waveforms.
       let cancelled = false
 
       const init = async () => {
         const WaveSurfer = (await import("wavesurfer.js")).default
         const RegionsPlugin = (await import("wavesurfer.js/dist/plugins/regions.esm.js")).default
 
-        // If cleanup already ran (StrictMode double-invoke), bail out early.
         if (cancelled || !containerRef.current) return
 
         const regions = RegionsPlugin.create()
@@ -83,20 +88,16 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           height,
           normalize: true,
           interact: true,
+          minPxPerSec: ZOOM_MIN,
           plugins: [regions],
         })
 
         wsRef.current = ws
         regionsRef.current = regions
 
-        // Fetch audio through axios so the JWT Authorization header is included.
-        // WaveSurfer's own internal fetch() would not carry the auth header.
         try {
           const response = await api.get(audioUrl, { responseType: "blob" })
-          if (cancelled) {
-            ws.destroy()
-            return
-          }
+          if (cancelled) { ws.destroy(); return }
           blobUrl = URL.createObjectURL(response.data)
           ws.load(blobUrl)
         } catch {
@@ -115,7 +116,6 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           onTimeUpdate?.(t)
         })
 
-        // v7 uses 'interaction' for seek clicks
         ws.on("interaction", () => {
           const t = ws.getCurrentTime()
           setCurrentTime(t)
@@ -129,7 +129,6 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           setCurrentTime(0)
         })
 
-        // Region drag/resize events — use ref so handler always calls latest version
         regions.on("region-updated", (region: any) => {
           onRegionUpdateRef.current?.(region.id, region.start, region.end)
         })
@@ -184,28 +183,44 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       }
     }, [muted])
 
+    const changeSpeed = useCallback((next: number) => {
+      wsRef.current?.setPlaybackRate(next)
+      setSpeedState(next)
+    }, [])
+
+    const changeZoom = useCallback((delta: number) => {
+      setZoomState(prev => {
+        const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, prev + delta))
+        wsRef.current?.zoom(next)
+        return next
+      })
+    }, [])
+
     return (
       <Box>
+        {/* Waveform container — scrollable when zoomed in */}
         <Box
           ref={containerRef}
           w="full"
           bg="bg.subtle"
           rounded="md"
-          overflow="hidden"
+          overflow="auto"
           minH={`${height}px`}
           borderWidth="1px"
           borderColor="border"
           opacity={ready ? 1 : 0.5}
+          css={{
+            "&::-webkit-scrollbar": { height: "4px" },
+            "&::-webkit-scrollbar-track": { background: "transparent" },
+            "&::-webkit-scrollbar-thumb": { background: "#4a4c54", borderRadius: "999px" },
+          }}
         />
-        <HStack mt={2} justify="space-between" px={1}>
+
+        {/* Controls row */}
+        <HStack mt={2} justify="space-between" px={1} flexWrap="wrap" gap={1}>
+          {/* Transport + mute */}
           <HStack gap={1}>
-            <IconButton
-              aria-label="Skip to start"
-              size="sm"
-              variant="ghost"
-              onClick={skipToStart}
-              disabled={!ready}
-            >
+            <IconButton aria-label="Skip to start" size="sm" variant="ghost" onClick={skipToStart} disabled={!ready}>
               <SkipBack size={16} />
             </IconButton>
             <IconButton
@@ -218,21 +233,64 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
             >
               {playing ? <Pause size={16} /> : <Play size={16} />}
             </IconButton>
-            <IconButton
-              aria-label={muted ? "Unmute" : "Mute"}
-              size="sm"
-              variant="ghost"
-              onClick={toggleMute}
-              disabled={!ready}
-            >
+            <IconButton aria-label={muted ? "Unmute" : "Mute"} size="sm" variant="ghost" onClick={toggleMute} disabled={!ready}>
               {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </IconButton>
           </HStack>
-          <Text fontSize="sm" color="fg.muted" fontFamily="mono">
-            {fmtTime(currentTime)}
-            {" / "}
-            {fmtTime(duration)}
-          </Text>
+
+          {/* Speed buttons */}
+          <HStack gap={0.5}>
+            {SPEED_STEPS.map(s => (
+              <Box
+                key={s}
+                as="button"
+                px="6px"
+                py="2px"
+                fontSize="10px"
+                rounded="sm"
+                borderWidth="1px"
+                borderColor={speed === s ? "blue.400" : "border"}
+                bg={speed === s ? "blue.900" : "transparent"}
+                color={speed === s ? "blue.300" : "fg.muted"}
+                cursor={ready ? "pointer" : "not-allowed"}
+                opacity={ready ? 1 : 0.4}
+                onClick={() => ready && changeSpeed(s)}
+                title={`${s}× speed`}
+              >
+                {s}×
+              </Box>
+            ))}
+          </HStack>
+
+          {/* Zoom controls + time */}
+          <HStack gap={1}>
+            <IconButton
+              aria-label="Zoom out"
+              size="xs"
+              variant="ghost"
+              disabled={!ready || zoom <= ZOOM_MIN}
+              onClick={() => changeZoom(-ZOOM_STEP)}
+              title="Zoom out"
+            >
+              <ZoomOut size={14} />
+            </IconButton>
+            <Text fontSize="10px" color="fg.muted" w="40px" textAlign="center" userSelect="none">
+              {zoom}px
+            </Text>
+            <IconButton
+              aria-label="Zoom in"
+              size="xs"
+              variant="ghost"
+              disabled={!ready || zoom >= ZOOM_MAX}
+              onClick={() => changeZoom(ZOOM_STEP)}
+              title="Zoom in"
+            >
+              <ZoomIn size={14} />
+            </IconButton>
+            <Text fontSize="sm" color="fg.muted" fontFamily="mono" ml={2}>
+              {fmtTime(currentTime)} / {fmtTime(duration)}
+            </Text>
+          </HStack>
         </HStack>
       </Box>
     )
