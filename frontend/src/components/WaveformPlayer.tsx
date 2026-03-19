@@ -57,6 +57,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
     const regionsRef = useRef<any>(null)
     const onRegionUpdateRef = useRef(onRegionUpdate)
     const onRangeSelectRef = useRef(onRangeSelect)
+    const addingProgrammatically = useRef(false)
     const [playing, setPlaying] = useState(false)
     const [currentTime, setCurrentTime] = useState(0)
     const [duration, setDuration] = useState(0)
@@ -136,10 +137,12 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           onRegionUpdateRef.current?.(region.id, region.start, region.end)
         })
 
-        // Drag on empty waveform space to select a time range (fires onRangeSelect,
-        // then removes the temporary region so it doesn't litter the display).
+        // Drag on empty waveform space to select a time range.
+        // Guard: region-created fires for both drag and addRegion() calls —
+        // skip it when we're adding programmatically.
         regions.enableDragSelection({ color: "rgba(59,130,246,0.15)" })
         regions.on("region-created", (region: any) => {
+          if (addingProgrammatically.current) return
           if (onRangeSelectRef.current) {
             onRangeSelectRef.current(region.start, region.end)
           }
@@ -171,7 +174,9 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       playPause: () => wsRef.current?.playPause(),
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
       addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
+        addingProgrammatically.current = true
         regionsRef.current?.addRegion({ id, start, end, color, drag: false, resize: false })
+        addingProgrammatically.current = false
       },
       clearRegions: () => {
         regionsRef.current?.clearRegions()
