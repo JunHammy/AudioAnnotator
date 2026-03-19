@@ -158,7 +158,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
       playPause: () => wsRef.current?.playPause(),
       getCurrentTime: () => wsRef.current?.getCurrentTime() ?? 0,
       addRegion: (id: string, start: number, end: number, color = "rgba(59,130,246,0.25)") => {
-        regionsRef.current?.addRegion({ id, start, end, color, drag: true, resize: true })
+        regionsRef.current?.addRegion({ id, start, end, color, drag: false, resize: false })
       },
       clearRegions: () => {
         regionsRef.current?.clearRegions()
