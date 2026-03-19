@@ -1,3 +1,6 @@
+# Local testing plans (never commit)
+testingflow/
+
 # Python
 __pycache__/
 *.py[cod]
