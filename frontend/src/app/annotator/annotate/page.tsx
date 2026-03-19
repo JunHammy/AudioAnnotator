@@ -1750,20 +1750,29 @@ function AnnotateInner() {
             {/* Color legend — single scrollable row so it never grows the sticky area */}
             <Box overflowX="auto" mt={2}>
               <HStack gap={4} flexWrap="nowrap" minW="max-content">
-                {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (
-                  <HStack gap={2} flexWrap="nowrap">
-                    {Object.entries(SPEAKER_COLORS).map(([label, color]) => (
-                      <HStack key={label} gap={1} flexShrink={0}>
-                        <Box w="8px" h="8px" rounded="full" bg={color} flexShrink={0} />
-                        <Text fontSize="9px" color="fg.muted">{label}</Text>
-                      </HStack>
-                    ))}
-                    <HStack gap={1} flexShrink={0}>
-                      <Box w="8px" h="8px" rounded="full" bg="#6b7280" flexShrink={0} />
-                      <Text fontSize="9px" color="fg.muted">unknown</Text>
+                {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (() => {
+                  // Only show legend entries for speakers actually present in this file
+                  const presentLabels = [...new Set(
+                    data?.speaker_segments.map(s => s.speaker_label).filter(Boolean) as string[]
+                  )].sort()
+                  const hasUnknown = data?.speaker_segments.some(s => !s.speaker_label)
+                  return (
+                    <HStack gap={2} flexWrap="nowrap">
+                      {presentLabels.map(label => (
+                        <HStack key={label} gap={1} flexShrink={0}>
+                          <Box w="8px" h="8px" rounded="full" bg={speakerColor(label)} flexShrink={0} />
+                          <Text fontSize="9px" color="fg.muted">{label}</Text>
+                        </HStack>
+                      ))}
+                      {hasUnknown && (
+                        <HStack gap={1} flexShrink={0}>
+                          <Box w="8px" h="8px" rounded="full" bg="#6b7280" flexShrink={0} />
+                          <Text fontSize="9px" color="fg.muted">unknown</Text>
+                        </HStack>
+                      )}
                     </HStack>
-                  </HStack>
-                )}
+                  )
+                })()}
                 {hasTask("emotion") && (
                   <HStack gap={2} flexWrap="nowrap">
                     {Object.entries(EMOTION_COLORS).map(([emo, color]) => (
@@ -1877,7 +1886,7 @@ function AnnotateInner() {
                                 duration={duration}
                                 currentTime={currentTime}
                                 selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
-                                getColor={(_: TranscriptSegment) => "#374151"}
+                                getColor={(s: TranscriptSegment) => spkBounds.has(`${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`) ? "#374151" : "#6b4c1a"}
                                 getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
                                 onSelect={s => setSelection({ type: "transcription", segment: s })}
                                 warningCount={unlinked}
@@ -1896,19 +1905,22 @@ function AnnotateInner() {
               })}
 
               {/* Transcription-only task (no speaker sections rendered above) */}
-              {hasTask("transcription") && !hasTask("speaker") && !hasTask("gender") && uniqueSpeakerLanes.length === 0 && (
-                <SegmentTrack
-                  label="Transcription"
-                  segments={data.transcription_segments}
-                  duration={duration}
-                  currentTime={currentTime}
-                  selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
-                  getColor={(_: TranscriptSegment) => "#374151"}
-                  getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
-                  onSelect={s => setSelection({ type: "transcription", segment: s })}
-                  warningCount={segmentMismatches.transcription}
-                />
-              )}
+              {hasTask("transcription") && !hasTask("speaker") && !hasTask("gender") && uniqueSpeakerLanes.length === 0 && (() => {
+                const spkBounds = new Set(data.speaker_segments.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`))
+                return (
+                  <SegmentTrack
+                    label="Transcription"
+                    segments={data.transcription_segments}
+                    duration={duration}
+                    currentTime={currentTime}
+                    selectedId={selection?.type === "transcription" ? selection.segment.id : undefined}
+                    getColor={(s: TranscriptSegment) => spkBounds.has(`${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`) ? "#374151" : "#6b4c1a"}
+                    getLabel={(s: TranscriptSegment) => s.edited_text ?? s.original_text ?? "—"}
+                    onSelect={s => setSelection({ type: "transcription", segment: s })}
+                    warningCount={segmentMismatches.transcription}
+                  />
+                )
+              })()}
 
               {/* Emotion track — shown below all speaker sections */}
               {hasTask("emotion") && !emotionGated && (
