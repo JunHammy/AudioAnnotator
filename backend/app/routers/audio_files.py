@@ -136,16 +136,24 @@ async def upload_audio_file(
         raise HTTPException(status_code=400, detail=f"File '{audio_name}' already exists.")
 
     # ── Parse optional JSONs ──────────────────────────────────────────────────
+    _MAX_JSON_BYTES = 10 * 1024 * 1024  # 10 MB
+
+    async def _read_json(upload: UploadFile) -> dict:
+        raw = await upload.read()
+        if len(raw) > _MAX_JSON_BYTES:
+            raise HTTPException(status_code=413, detail=f"JSON file '{upload.filename}' exceeds 10 MB limit")
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON in '{upload.filename}': {exc}")
+
     eg_data = sp_data = tr_data = None
-    try:
-        if emotion_gender_json and emotion_gender_json.filename:
-            eg_data = json.loads(await emotion_gender_json.read())
-        if speaker_json and speaker_json.filename:
-            sp_data = json.loads(await speaker_json.read())
-        if transcription_json and transcription_json.filename:
-            tr_data = json.loads(await transcription_json.read())
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
+    if emotion_gender_json and emotion_gender_json.filename:
+        eg_data = await _read_json(emotion_gender_json)
+    if speaker_json and speaker_json.filename:
+        sp_data = await _read_json(speaker_json)
+    if transcription_json and transcription_json.filename:
+        tr_data = await _read_json(transcription_json)
 
     # ── Save audio file ───────────────────────────────────────────────────────
     with dest_path.open("wb") as f:
@@ -278,8 +286,12 @@ async def add_json_to_file(
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    _MAX_JSON_BYTES = 10 * 1024 * 1024  # 10 MB
+    raw = await json_file.read()
+    if len(raw) > _MAX_JSON_BYTES:
+        raise HTTPException(status_code=413, detail="JSON file exceeds 10 MB limit")
     try:
-        data = json.loads(await json_file.read())
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {exc}")
 
@@ -348,12 +360,23 @@ async def add_json_to_file(
 async def stream_audio(
     file_id: int,
     db: AsyncSession = Depends(get_db),
-    _user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
     af = result.scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
+
+    # Annotators may only stream files they are assigned to
+    if current_user.role != "admin":
+        assigned = await db.execute(
+            select(Assignment).where(
+                Assignment.audio_file_id == file_id,
+                Assignment.annotator_id == current_user.id,
+            )
+        )
+        if not assigned.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Not assigned to this file")
 
     path = Path(af.file_path)
     if not path.is_file():
