@@ -155,6 +155,10 @@ function genderColor(g: string | null): string {
   return GENDER_COLORS[g ?? "unk"] ?? "#6b7280"
 }
 
+function isLockedError(err: unknown): boolean {
+  return (err as { response?: { status?: number } })?.response?.status === 423
+}
+
 // Smart placement: if playhead is inside an existing segment, jump to its end.
 // Clip end_time against the next segment start to avoid overlap.
 function smartPlacement(
@@ -427,11 +431,10 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
       }
     } catch (err: unknown) {
       const status = (err as { response?: { status?: number } })?.response?.status
-      if (status === 409) {
-        ToastWizard.standard(
-          "warning",
-          "Segment was modified by another annotator. Reload to get latest."
-        )
+      if (status === 423) {
+        ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      } else if (status === 409) {
+        ToastWizard.standard("warning", "Segment was modified by another annotator. Reload to get latest.")
       } else {
         ToastWizard.standard("error", "Save failed")
       }
@@ -1321,8 +1324,9 @@ function AnnotateInner() {
       setSegmentModal(m => ({ ...m, open: false }))
       await load()
       ToastWizard.standard("success", "Segment added")
-    } catch {
-      ToastWizard.standard("error", "Failed to add segment")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to add segment")
     } finally {
       setAddingSegment(false)
     }
@@ -1345,8 +1349,9 @@ function AnnotateInner() {
       setNewSpeakerName("")
       await load()
       ToastWizard.standard("success", `Speaker "${label.trim()}" added`)
-    } catch {
-      ToastWizard.standard("error", "Failed to add speaker")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to add speaker")
     } finally {
       setAddingSegment(false)
     }
@@ -1377,8 +1382,9 @@ function AnnotateInner() {
       }
       await load()
       ToastWizard.standard("success", `Speaker "${label}" and their segments deleted`)
-    } catch {
-      ToastWizard.standard("error", "Failed to delete speaker")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to delete speaker")
     }
   }
 
@@ -1388,8 +1394,9 @@ function AnnotateInner() {
       setSelection(null)
       await load()
       ToastWizard.standard("success", "Segment deleted")
-    } catch {
-      ToastWizard.standard("error", "Failed to delete segment")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to delete segment")
     }
   }
 
@@ -1410,8 +1417,9 @@ function AnnotateInner() {
       setTrModal(m => ({ ...m, open: false }))
       await load()
       ToastWizard.standard("success", "Transcription segment added")
-    } catch {
-      ToastWizard.standard("error", "Failed to add transcription segment")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to add transcription segment")
     } finally {
       setAddingSegment(false)
     }
@@ -1423,8 +1431,9 @@ function AnnotateInner() {
       setSelection(null)
       await load()
       ToastWizard.standard("success", "Transcription segment deleted")
-    } catch {
-      ToastWizard.standard("error", "Failed to delete transcription segment")
+    } catch (err) {
+      if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
+      else ToastWizard.standard("error", "Failed to delete transcription segment")
     }
   }
 

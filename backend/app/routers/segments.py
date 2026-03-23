@@ -23,6 +23,29 @@ STALE_ERROR = HTTPException(
     detail="Segment was modified by another annotator. Please reload and retry.",
 )
 
+LOCKED_ERROR = HTTPException(
+    status_code=423,
+    detail="This task is locked — all annotators have submitted. No further changes allowed.",
+)
+
+
+async def _check_speaker_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
+    """Raise 423 if speaker track is locked and user is not admin."""
+    if user.role == "admin":
+        return
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == audio_file_id))).scalar_one_or_none()
+    if af and af.collaborative_locked_speaker:
+        raise LOCKED_ERROR
+
+
+async def _check_transcription_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
+    """Raise 423 if transcription track is locked and user is not admin."""
+    if user.role == "admin":
+        return
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == audio_file_id))).scalar_one_or_none()
+    if af and af.collaborative_locked_transcription:
+        raise LOCKED_ERROR
+
 
 # ─── Speaker Segments ────────────────────────────────────────────────────────
 
@@ -51,6 +74,8 @@ async def update_speaker_segment(
     segment = result.scalar_one_or_none()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
+
+    await _check_speaker_lock(db, segment.audio_file_id, current_user)
 
     # Optimistic locking — only enforced for label/metadata changes, not time-only (drag) changes.
     # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
@@ -134,6 +159,8 @@ async def create_speaker_segment(
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    await _check_speaker_lock(db, body.audio_file_id, current_user)
+
     # Require active speaker assignment for this file
     assignment = (await db.execute(
         select(Assignment)
@@ -177,6 +204,8 @@ async def delete_speaker_by_label(
     current_user: User = Depends(get_current_user),
 ):
     """Delete ALL speaker segments for a given label on a file, plus their exact-boundary transcription matches."""
+    await _check_speaker_lock(db, file_id, current_user)
+
     assignment = (await db.execute(
         select(Assignment)
         .where(Assignment.audio_file_id == file_id)
@@ -219,6 +248,8 @@ async def delete_speaker_segment(
     )).scalar_one_or_none()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
+
+    await _check_speaker_lock(db, segment.audio_file_id, current_user)
 
     assignment = (await db.execute(
         select(Assignment)
@@ -269,6 +300,8 @@ async def create_transcription_segment(
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
 
+    await _check_transcription_lock(db, body.audio_file_id, current_user)
+
     assignment = (await db.execute(
         select(Assignment)
         .where(Assignment.audio_file_id == body.audio_file_id)
@@ -304,6 +337,8 @@ async def delete_transcription_segment(
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
+    await _check_transcription_lock(db, segment.audio_file_id, current_user)
+
     assignment = (await db.execute(
         select(Assignment)
         .where(Assignment.audio_file_id == segment.audio_file_id)
@@ -328,6 +363,8 @@ async def update_transcription_segment(
     segment = result.scalar_one_or_none()
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
+
+    await _check_transcription_lock(db, segment.audio_file_id, current_user)
 
     # Optimistic locking — only enforced for text/notes changes, not time-only edits
     has_text_changes = body.edited_text is not None or body.notes is not None
