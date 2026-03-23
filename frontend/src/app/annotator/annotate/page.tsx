@@ -334,6 +334,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   getGenderForSpeaker?: (label: string) => string
   onSpeakerSegHover?: (id: number | null) => void
   canEditGender?: boolean
+  locked?: boolean
 }>(function SegmentEditor({
   selection,
   onClose,
@@ -346,6 +347,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   getGenderForSpeaker,
   onSpeakerSegHover,
   canEditGender = false,
+  locked = false,
 }, ref) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -852,7 +854,8 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
           />
         </Field.Root>
 
-        <Button size="sm" colorPalette="blue" loading={saving} onClick={save}>
+        <Button size="sm" colorPalette="blue" loading={saving} disabled={locked} onClick={save}
+          title={locked ? "This task is locked — no further changes allowed" : undefined}>
           <Save size={14} />
           Save
         </Button>
@@ -862,7 +865,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
             size="sm"
             colorPalette="red"
             variant="outline"
+            disabled={locked}
             onClick={handleDelete}
+            title={locked ? "This task is locked — no further changes allowed" : undefined}
           >
             <Trash2 size={14} />
             Delete Segment
@@ -1702,7 +1707,7 @@ function AnnotateInner() {
         {/* Row 2: action buttons + assignment status pills */}
         <HStack gap={2} flexWrap="wrap">
           {/* Add Speaker */}
-          {hasTask("speaker") && (
+          {hasTask("speaker") && !data.audio_file.locked_speaker && (
             addingSpeakerMode ? (
               <HStack gap={1}>
                 <Input
@@ -1724,13 +1729,13 @@ function AnnotateInner() {
             )
           )}
           {/* Add Segment */}
-          {hasTask("speaker") && !addingSpeakerMode && (
+          {hasTask("speaker") && !addingSpeakerMode && !data.audio_file.locked_speaker && (
             <Button size="sm" variant="outline" colorPalette="teal" onClick={openSegmentModal}>
               <Plus size={13} /> Segment
             </Button>
           )}
           {/* Add Transcription */}
-          {hasTask("transcription") && (
+          {hasTask("transcription") && !data.audio_file.locked_transcription && (
             <Button size="sm" variant="outline" colorPalette="purple" onClick={openTrModal}>
               <Plus size={13} /> Transcription
             </Button>
@@ -1887,7 +1892,7 @@ function AnnotateInner() {
                       </HStack>
 
                       {/* Delete speaker button */}
-                      {hasTask("speaker") && (
+                      {hasTask("speaker") && !data.audio_file.locked_speaker && (
                         <Box
                           as="button"
                           onClick={e => {
@@ -2055,6 +2060,11 @@ function AnnotateInner() {
             getGenderForSpeaker={getGenderForSpeaker}
             onSpeakerSegHover={setHoveredSpeakerSegId}
             canEditGender={hasTask("gender")}
+            locked={
+              selection.type === "speaker" ? data.audio_file.locked_speaker
+              : selection.type === "transcription" ? data.audio_file.locked_transcription
+              : false
+            }
           />
         )}
       </Box>
