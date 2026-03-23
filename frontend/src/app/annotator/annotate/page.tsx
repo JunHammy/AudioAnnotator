@@ -1874,56 +1874,17 @@ function AnnotateInner() {
                     {isOpen && (
                       <Box px={3} pb={3} pt={2} display="flex" flexDir="column" gap={2} borderTopWidth="1px" borderColor="border">
                         {hasTask("speaker") && (
-                          <>
-                            <SegmentTrack
-                              label="Segments"
-                              segments={speakerSegs}
-                              duration={duration}
-                              currentTime={currentTime}
-                              selectedId={selection?.type === "speaker" ? selection.segment.id : undefined}
-                              highlightedId={hoveredSpeakerSegId ?? undefined}
-                              getColor={(s: Segment) => speakerColor(s.speaker_label)}
-                              getLabel={(s: Segment) => s.speaker_label ?? "?"}
-                              onSelect={s => setSelection({ type: "speaker", segment: s })}
-                            />
-                            {/* Individual segment rows */}
-                            <Box display="flex" flexDir="column" gap={1} mt={1}>
-                              {speakerSegs.map(seg => {
-                                const isSelected = selection?.type === "speaker" && selection.segment.id === seg.id
-                                const isHovered = hoveredSpeakerSegId === seg.id
-                                return (
-                                  <HStack
-                                    key={seg.id}
-                                    px={2} py={1}
-                                    rounded="sm"
-                                    cursor="pointer"
-                                    gap={2}
-                                    fontSize="xs"
-                                    borderWidth="1px"
-                                    borderColor={isHovered ? "cyan.400" : isSelected ? "blue.500" : "border"}
-                                    bg={isHovered ? "rgba(6,182,212,0.12)" : isSelected ? "blue.900" : "bg.muted"}
-                                    transition="all 0.15s"
-                                    onClick={() => setSelection({ type: "speaker", segment: seg })}
-                                  >
-                                    <Box w="6px" h="6px" rounded="full" bg={speakerColor(seg.speaker_label)} flexShrink={0} />
-                                    <Text color="fg.muted" fontFamily="mono" flex={1}>
-                                      {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
-                                    </Text>
-                                    <Box
-                                      as="button"
-                                      px={1} py="1px"
-                                      fontSize="10px"
-                                      color="fg.subtle"
-                                      _hover={{ color: "fg" }}
-                                      onClick={e => { e.stopPropagation(); playerRef.current?.playRange(seg.start_time, seg.end_time) }}
-                                    >
-                                      ▶
-                                    </Box>
-                                  </HStack>
-                                )
-                              })}
-                            </Box>
-                          </>
+                          <SegmentTrack
+                            label="Segments"
+                            segments={speakerSegs}
+                            duration={duration}
+                            currentTime={currentTime}
+                            selectedId={selection?.type === "speaker" ? selection.segment.id : undefined}
+                            highlightedId={hoveredSpeakerSegId ?? undefined}
+                            getColor={(s: Segment) => speakerColor(s.speaker_label)}
+                            getLabel={(s: Segment) => s.speaker_label ?? "?"}
+                            onSelect={s => setSelection({ type: "speaker", segment: s })}
+                          />
                         )}
                         {hasTask("transcription") && (
                           trSegs.length > 0 ? (() => {

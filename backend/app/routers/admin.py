@@ -1,5 +1,4 @@
 import json
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -192,23 +191,19 @@ async def get_dashboard(
         .order_by(User.username)
     )).all()
 
-    # ── Velocity: completed assignments per day, last 14 days ──────────────────
-    cutoff = datetime.now(timezone.utc) - timedelta(days=14)
-    velocity_raw = (await db.execute(
+    # ── Task breakdown by type ─────────────────────────────────────────────────
+    task_rows = (await db.execute(
         select(
-            func.date(Assignment.completed_at).label("day"),
-            func.count(Assignment.id).label("count"),
+            Assignment.task_type,
+            func.count(Assignment.id).label("total"),
+            func.sum(case((Assignment.status == "completed", 1), else_=0)).label("done"),
         )
-        .where(Assignment.status == "completed")
-        .where(Assignment.completed_at >= cutoff)
-        .group_by(func.date(Assignment.completed_at))
+        .group_by(Assignment.task_type)
     )).all()
-    velocity_map = {str(r.day): r.count for r in velocity_raw}
-    today = datetime.now(timezone.utc).date()
-    velocity = [
-        {"date": (today - timedelta(days=i)).isoformat(), "count": velocity_map.get((today - timedelta(days=i)).isoformat(), 0)}
-        for i in range(13, -1, -1)
-    ]
+    task_breakdown = {
+        r.task_type: {"total": r.total, "done": int(r.done or 0)}
+        for r in task_rows
+    }
 
     return {
         "stats": {
@@ -218,7 +213,7 @@ async def get_dashboard(
             "flagged_segments": flagged_count,
             "low_annotator_files": low_annotator_files,
         },
-        "velocity": velocity,
+        "task_breakdown": task_breakdown,
         "recent_activity": [
             {
                 "id": r.id,
