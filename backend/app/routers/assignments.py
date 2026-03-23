@@ -18,6 +18,7 @@ from app.schemas.schemas import (
 from app.services.emotion import auto_finalize_emotions
 from app.services.audit import write_audit_log
 from app.services.notifications import create_notification
+from app.services.sse import sse_manager
 
 router = APIRouter()
 
@@ -59,6 +60,20 @@ async def create_assignment(
     await write_audit_log(db, _admin.id, "assign_task", "assignment", assignment.id,
                           {"audio_file_id": body.audio_file_id, "annotator_id": body.annotator_id,
                            "task_type": body.task_type})
+    af_name = (await db.execute(
+        select(AudioFile.filename).where(AudioFile.id == body.audio_file_id)
+    )).scalar_one_or_none() or f"file #{body.audio_file_id}"
+    await create_notification(
+        db,
+        user_id=body.annotator_id,
+        notif_type="assignment",
+        message=f"New task assigned: {body.task_type} on {af_name}",
+        audio_file_id=body.audio_file_id,
+    )
+    await sse_manager.broadcast_user(body.annotator_id, {
+        "type": "assignment_created",
+        "data": {"audio_file_id": body.audio_file_id, "task_type": body.task_type},
+    })
     return assignment
 
 
@@ -126,6 +141,13 @@ async def create_assignment_batch(
             message=f"New task assigned: {task_label} on {af_name}",
             audio_file_id=body.audio_file_id,
         )
+        await sse_manager.broadcast_user(body.annotator_id, {
+            "type": "assignment_created",
+            "data": {
+                "audio_file_id": body.audio_file_id,
+                "task_types": [a.task_type for a in created],
+            },
+        })
 
     return created
 

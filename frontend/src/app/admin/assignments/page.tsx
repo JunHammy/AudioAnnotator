@@ -172,9 +172,7 @@ export default function AssignTasksPage() {
   const groupedAssignments = groupByAnnotator(assignments);
 
   const annotatorOptions = createListCollection({
-    items: annotators
-      .filter((u) => !groupedAssignments.has(u.id))
-      .map((u) => ({ label: u.username, value: String(u.id) })),
+    items: annotators.map((u) => ({ label: u.username, value: String(u.id) })),
   });
 
   // ── Bulk assignment derived values ──────────────────────────────────────────

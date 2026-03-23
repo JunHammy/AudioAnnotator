@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Badge,
   Box,
@@ -16,6 +16,7 @@ import { Calendar } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import api from "@/lib/axios";
+import { useSSE } from "@/context/sse";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,7 @@ function StatCard({ label, value, color }: { label: string; value: number; color
 export default function AnnotatorTasksPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const { on } = useSSE();
   const [assignments,    setAssignments]    = useState<Assignment[]>([]);
   const [filenameMap,    setFilenameMap]    = useState<Record<number, string>>({});
   const [adminResponseMap, setAdminResponseMap] = useState<Record<number, string | null>>({});
@@ -90,7 +92,7 @@ export default function AnnotatorTasksPage() {
   const [filter,         setFilter]         = useState<"all" | "pending" | "in_progress" | "completed">("all");
   const [search,         setSearch]         = useState("");
 
-  useEffect(() => {
+  const fetchAll = useCallback(() => {
     Promise.all([
       api.get("/api/assignments/"),
       api.get("/api/audio-files"),
@@ -110,6 +112,11 @@ export default function AnnotatorTasksPage() {
       setEmotionProgress(progMap);
     }).finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Re-fetch when a new assignment arrives via SSE
+  useEffect(() => on("assignment_created", fetchAll), [on, fetchAll]);
 
   const stats = {
     assigned:    assignments.length,

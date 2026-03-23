@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 from app.auth.dependencies import get_current_user
 from app.database import get_db
 from app.models.models import AudioFile, SegmentEditHistory, SpeakerSegment, TranscriptionSegment, User, Assignment
+from app.services.sse import sse_manager
 from app.schemas.schemas import (
     SpeakerSegmentCreate,
     SpeakerSegmentResponse,
@@ -27,6 +28,24 @@ LOCKED_ERROR = HTTPException(
     status_code=423,
     detail="This task is locked — all annotators have submitted. No further changes allowed.",
 )
+
+
+def _spk_dict(s: SpeakerSegment) -> dict:
+    return {
+        "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+        "speaker_label": s.speaker_label, "gender": s.gender,
+        "emotion": s.emotion, "emotion_other": s.emotion_other,
+        "is_ambiguous": s.is_ambiguous, "notes": s.notes,
+        "source": s.source, "updated_at": s.updated_at.isoformat(),
+    }
+
+
+def _trans_dict(s: TranscriptionSegment) -> dict:
+    return {
+        "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+        "original_text": s.original_text, "edited_text": s.edited_text,
+        "notes": s.notes, "updated_at": s.updated_at.isoformat(),
+    }
 
 
 async def _check_speaker_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
@@ -106,6 +125,8 @@ async def update_speaker_segment(
                 setattr(segment, field, new_val)
 
     # Time editing — only allowed on shared baseline segments, not per-annotator copies
+    times_changed = False
+    synced_trans_ids: list[int] = []
     if (body.start_time is not None or body.end_time is not None):
         if segment.source != "pre_annotated":
             raise HTTPException(status_code=400, detail="Cannot change timestamps on annotator emotion copies.")
@@ -121,6 +142,7 @@ async def update_speaker_segment(
                 edited_by=current_user.id,
             ))
             segment.start_time = round(body.start_time, 3)
+            times_changed = True
 
         if body.end_time is not None and body.end_time != old_end:
             db.add(SegmentEditHistory(
@@ -130,6 +152,7 @@ async def update_speaker_segment(
                 edited_by=current_user.id,
             ))
             segment.end_time = round(body.end_time, 3)
+            times_changed = True
 
         # Sync matching TranscriptionSegments to stay aligned with speaker boundaries
         trans_result = await db.execute(
@@ -141,9 +164,20 @@ async def update_speaker_segment(
         for t in trans_result.scalars().all():
             t.start_time = segment.start_time
             t.end_time = segment.end_time
+            synced_trans_ids.append(t.id)
 
     await db.flush()
     await db.refresh(segment)
+
+    # Broadcast to other annotators on this file
+    await sse_manager.broadcast(segment.audio_file_id, {"type": "speaker_updated", "data": _spk_dict(segment)})
+    if times_changed and synced_trans_ids:
+        updated_trans = (await db.execute(
+            select(TranscriptionSegment).where(TranscriptionSegment.id.in_(synced_trans_ids))
+        )).scalars().all()
+        for t in updated_trans:
+            await sse_manager.broadcast(segment.audio_file_id, {"type": "transcription_updated", "data": _trans_dict(t)})
+
     return segment
 
 
@@ -183,16 +217,22 @@ async def create_speaker_segment(
     db.add(new_seg)
 
     # Create a matching blank transcription segment
-    db.add(TranscriptionSegment(
+    new_trans = TranscriptionSegment(
         audio_file_id=body.audio_file_id,
         annotator_id=current_user.id,
         start_time=round(body.start_time, 3),
         end_time=round(body.end_time, 3),
         original_text="",
-    ))
+    )
+    db.add(new_trans)
 
     await db.flush()
     await db.refresh(new_seg)
+    await db.refresh(new_trans)
+
+    await sse_manager.broadcast(body.audio_file_id, {"type": "speaker_created", "data": _spk_dict(new_seg)})
+    await sse_manager.broadcast(body.audio_file_id, {"type": "transcription_created", "data": _trans_dict(new_trans)})
+
     return new_seg
 
 
@@ -221,7 +261,10 @@ async def delete_speaker_by_label(
         .where(SpeakerSegment.speaker_label == speaker_label)
     )).scalars().all()
 
+    deleted_spk_ids: list[int] = []
+    deleted_trans_ids: list[int] = []
     for seg in segments:
+        deleted_spk_ids.append(seg.id)
         # Delete exact-boundary transcription segments
         trans = (await db.execute(
             select(TranscriptionSegment)
@@ -230,10 +273,16 @@ async def delete_speaker_by_label(
             .where(TranscriptionSegment.end_time == seg.end_time)
         )).scalars().all()
         for t in trans:
+            deleted_trans_ids.append(t.id)
             await db.delete(t)
         await db.delete(seg)
 
     await db.flush()
+
+    for sid in deleted_spk_ids:
+        await sse_manager.broadcast(file_id, {"type": "speaker_deleted", "data": {"id": sid}})
+    for tid in deleted_trans_ids:
+        await sse_manager.broadcast(file_id, {"type": "transcription_deleted", "data": {"id": tid}})
 
 
 @router.delete("/speaker/{segment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -260,17 +309,25 @@ async def delete_speaker_segment(
     if not assignment:
         raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
 
-    trans_result = await db.execute(
+    file_id = segment.audio_file_id
+    spk_id = segment.id
+
+    trans_list = (await db.execute(
         select(TranscriptionSegment)
         .where(TranscriptionSegment.audio_file_id == segment.audio_file_id)
         .where(TranscriptionSegment.start_time == segment.start_time)
         .where(TranscriptionSegment.end_time == segment.end_time)
-    )
-    for t in trans_result.scalars().all():
+    )).scalars().all()
+    trans_ids = [t.id for t in trans_list]
+    for t in trans_list:
         await db.delete(t)
 
     await db.delete(segment)
     await db.flush()
+
+    await sse_manager.broadcast(file_id, {"type": "speaker_deleted", "data": {"id": spk_id}})
+    for tid in trans_ids:
+        await sse_manager.broadcast(file_id, {"type": "transcription_deleted", "data": {"id": tid}})
 
 
 # ─── Transcription Segments ──────────────────────────────────────────────────
@@ -321,6 +378,9 @@ async def create_transcription_segment(
     db.add(new_seg)
     await db.flush()
     await db.refresh(new_seg)
+
+    await sse_manager.broadcast(body.audio_file_id, {"type": "transcription_created", "data": _trans_dict(new_seg)})
+
     return new_seg
 
 
@@ -348,8 +408,12 @@ async def delete_transcription_segment(
     if not assignment:
         raise HTTPException(status_code=403, detail="You do not have a transcription assignment for this file.")
 
+    file_id = segment.audio_file_id
+    seg_id = segment.id
     await db.delete(segment)
     await db.flush()
+
+    await sse_manager.broadcast(file_id, {"type": "transcription_deleted", "data": {"id": seg_id}})
 
 
 @router.patch("/transcription/{segment_id}", response_model=TranscriptionSegmentResponse)
@@ -410,6 +474,9 @@ async def update_transcription_segment(
 
     await db.flush()
     await db.refresh(segment)
+
+    await sse_manager.broadcast(segment.audio_file_id, {"type": "transcription_updated", "data": _trans_dict(segment)})
+
     return segment
 
 

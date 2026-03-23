@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.config import settings
+from app.services.sse import sse_manager
 from app.database import get_db
 from app.models.models import (
     Assignment, AudioFile, Dataset, FinalAnnotation, OriginalJSONStore,
@@ -543,6 +544,14 @@ async def update_admin_response(
                 message=f"Admin responded to your remarks on {af.filename}",
                 audio_file_id=file_id,
             )
+            await sse_manager.broadcast_user(uid, {
+                "type": "notification",
+                "data": {
+                    "notif_type": "admin_response",
+                    "message": f"Admin responded to your remarks on {af.filename}",
+                    "audio_file_id": file_id,
+                },
+            })
 
     await db.flush()
     await db.refresh(af)
@@ -618,4 +627,13 @@ async def toggle_task_lock(
 
     await db.flush()
     await db.refresh(af)
+
+    await sse_manager.broadcast(file_id, {
+        "type": "lock_changed",
+        "data": {
+            "locked_speaker": af.collaborative_locked_speaker,
+            "locked_transcription": af.collaborative_locked_transcription,
+        },
+    })
+
     return af

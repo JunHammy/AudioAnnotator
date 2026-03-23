@@ -15,6 +15,7 @@ import {
 import { Bell, BellRing, CheckCheck, ClipboardList, MessageSquare } from "lucide-react";
 import { useRouter } from "next/navigation";
 import api from "@/lib/axios";
+import { useSSE } from "@/context/sse";
 
 interface Notification {
   id: number;
@@ -41,6 +42,7 @@ interface Props {
 
 export function NotificationBell({ collapsed }: Props) {
   const router = useRouter();
+  const { on } = useSSE();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
@@ -56,12 +58,33 @@ export function NotificationBell({ collapsed }: Props) {
     }
   }, []);
 
-  // Fetch on mount + poll every 60 s
+  // Fetch on mount + keep a fallback 60s poll
   useEffect(() => {
     fetchNotifications();
     const t = setInterval(fetchNotifications, 60_000);
     return () => clearInterval(t);
   }, [fetchNotifications]);
+
+  // Real-time updates via SSE
+  useEffect(() => {
+    // New assignment → server created a notification row; refetch to get it
+    const offAssignment = on("assignment_created", () => {
+      fetchNotifications();
+    });
+    // Admin response → server broadcast the notification data inline
+    const offNotif = on("notification", (data) => {
+      const d = data as { notif_type: string; message: string; audio_file_id: number | null };
+      setNotifications(prev => [{
+        id: Date.now(),          // temporary id until next refetch
+        type: d.notif_type,
+        message: d.message,
+        audio_file_id: d.audio_file_id,
+        read: false,
+        created_at: new Date().toISOString(),
+      }, ...prev]);
+    });
+    return () => { offAssignment(); offNotif(); };
+  }, [on, fetchNotifications]);
 
   const markAllRead = async () => {
     try {

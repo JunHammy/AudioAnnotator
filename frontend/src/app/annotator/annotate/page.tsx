@@ -1021,6 +1021,76 @@ function AnnotateInner() {
   // Keep dataRef current so the polling interval always compares against latest state
   useEffect(() => { dataRef.current = data }, [data])
 
+  // ── Server-Sent Events — real-time segment sync ───────────────────────────
+  useEffect(() => {
+    if (!fileId) return
+    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null
+    if (!token) return
+
+    const es = new EventSource(`/api/events/${fileId}?token=${encodeURIComponent(token)}`)
+
+    es.onmessage = (e: MessageEvent) => {
+      let event: { type: string; data?: Record<string, unknown> }
+      try { event = JSON.parse(e.data) } catch { return }
+
+      const { type, data: d } = event
+      if (!d) return
+
+      if (type === "speaker_updated") {
+        setData(prev => prev ? {
+          ...prev,
+          speaker_segments: prev.speaker_segments.map(s => s.id === d.id ? { ...s, ...d } as typeof s : s),
+        } : prev)
+      } else if (type === "speaker_created") {
+        setData(prev => {
+          if (!prev || prev.speaker_segments.some(s => s.id === d.id)) return prev
+          const next = [...prev.speaker_segments, d as unknown as typeof prev.speaker_segments[0]]
+          next.sort((a, b) => a.start_time - b.start_time)
+          return { ...prev, speaker_segments: next }
+        })
+      } else if (type === "speaker_deleted") {
+        setData(prev => prev ? {
+          ...prev,
+          speaker_segments: prev.speaker_segments.filter(s => s.id !== d.id),
+        } : prev)
+        setSelection(prev => prev?.type === "speaker" && prev.segment.id === d.id ? null : prev)
+      } else if (type === "transcription_updated") {
+        setData(prev => prev ? {
+          ...prev,
+          transcription_segments: prev.transcription_segments.map(s => s.id === d.id ? { ...s, ...d } as typeof s : s),
+        } : prev)
+      } else if (type === "transcription_created") {
+        setData(prev => {
+          if (!prev || prev.transcription_segments.some(s => s.id === d.id)) return prev
+          const next = [...prev.transcription_segments, d as unknown as typeof prev.transcription_segments[0]]
+          next.sort((a, b) => a.start_time - b.start_time)
+          return { ...prev, transcription_segments: next }
+        })
+      } else if (type === "transcription_deleted") {
+        setData(prev => prev ? {
+          ...prev,
+          transcription_segments: prev.transcription_segments.filter(s => s.id !== d.id),
+        } : prev)
+        setSelection(prev => prev?.type === "transcription" && prev.segment.id === d.id ? null : prev)
+      } else if (type === "lock_changed") {
+        setData(prev => prev ? {
+          ...prev,
+          audio_file: {
+            ...prev.audio_file,
+            locked_speaker: d.locked_speaker as boolean,
+            locked_transcription: d.locked_transcription as boolean,
+          },
+        } : prev)
+      }
+    }
+
+    es.onerror = () => {
+      // EventSource auto-reconnects on error — no action needed
+    }
+
+    return () => es.close()
+  }, [fileId])
+
   // Reset modal state whenever the file changes so stale open-state from a
   // previous navigation (Next.js App Router reuses the same component instance
   // across same-path navigations) never causes a modal to auto-open.
@@ -1046,6 +1116,8 @@ function AnnotateInner() {
     [data]
   )
 
+  // Fallback poll — only fires if the SSE connection is absent or drops.
+  // SSE normally keeps state current, so this rarely triggers the banner.
   useEffect(() => {
     if (!fileId || !hasCollaborativeTasks) return
     const interval = setInterval(async () => {
@@ -1056,9 +1128,9 @@ function AnnotateInner() {
           setHasUpdates(true)
         }
       } catch {
-        // Silent — don't disturb the user if the background check fails
+        // Silent
       }
-    }, 30_000)
+    }, 60_000)
     return () => clearInterval(interval)
   }, [fileId, hasCollaborativeTasks])
 
