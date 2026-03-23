@@ -514,6 +514,9 @@ async def get_annotate_data(
             "language": af.language,
             "emotion_gated": emotion_gated,   # True → speaker not yet locked
             "annotator_remarks": af.annotator_remarks,
+            "admin_response": af.admin_response,
+            "locked_speaker": af.collaborative_locked_speaker,
+            "locked_transcription": af.collaborative_locked_transcription,
         },
         "speaker_segments": [_spk(s) for s in speaker_segs],
         "emotion_segments": [_spk(s) for s in emotion_segs],

@@ -194,7 +194,9 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
         addingProgrammatically.current = true
         const r = regionsRef.current?.addRegion({ id, start, end, color, drag: false, resize: false })
         if (r) regionMapRef.current.set(id, { region: r, color })
-        addingProgrammatically.current = false
+        // Defer reset so any deferred region-created events (WaveSurfer may
+        // queue them as microtasks) are still caught by the guard.
+        setTimeout(() => { addingProgrammatically.current = false }, 0)
       },
       clearRegions: () => {
         regionsRef.current?.clearRegions()

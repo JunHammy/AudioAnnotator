@@ -31,7 +31,7 @@ import {
   VStack,
   createListCollection,
 } from "@chakra-ui/react"
-import { ArrowLeft, CheckCheck, Keyboard, MessageSquare, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
+import { ArrowLeft, CheckCheck, Keyboard, Lock, MessageSquare, Plus, RefreshCw, Save, Trash2 } from "lucide-react"
 import dynamic from "next/dynamic"
 import api from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -57,6 +57,8 @@ interface AnnotateData {
     emotion_gated: boolean
     annotator_remarks: string | null
     admin_response: string | null
+    locked_speaker: boolean
+    locked_transcription: boolean
   }
   speaker_segments: Segment[]
   emotion_segments: Segment[]
@@ -1014,6 +1016,14 @@ function AnnotateInner() {
   // Keep dataRef current so the polling interval always compares against latest state
   useEffect(() => { dataRef.current = data }, [data])
 
+  // Reset modal state whenever the file changes so stale open-state from a
+  // previous navigation (Next.js App Router reuses the same component instance
+  // across same-path navigations) never causes a modal to auto-open.
+  useEffect(() => {
+    setSegmentModal({ open: false, speaker: "", start: 0, end: 2 })
+    setTrModal({ open: false, start: 0, end: 2, originalText: "", alignTo: "" })
+  }, [fileId])
+
   // Helper: check if the annotator has a specific task type assigned for this file
   const hasTask = (t: string) =>
     data?.assignments.some(a => a.task_type === t) ?? false
@@ -1730,26 +1740,38 @@ function AnnotateInner() {
           <Box flex={1} />
 
           {/* Assignment status pills */}
-          {data.assignments.map(a => (
-            <HStack key={a.id} gap={1}>
-              <Badge
-                colorPalette={a.status === "completed" ? "green" : a.status === "in_progress" ? "blue" : "gray"}
-                size="sm"
-              >
-                {a.task_type}
-              </Badge>
-              {a.status === "completed" ? (
-                <Button size="xs" colorPalette="gray" variant="ghost" loading={completing[a.id]}
-                  title="Undo — reopen this task" onClick={() => undoComplete(a)}>
-                  ↩ Undo
-                </Button>
-              ) : (
-                <Button size="xs" colorPalette="green" variant="outline" loading={completing[a.id]} onClick={() => markComplete(a)}>
-                  <CheckCheck size={12} /> Done
-                </Button>
-              )}
-            </HStack>
-          ))}
+          {data.assignments.map(a => {
+            const isLocked =
+              (a.task_type === "speaker" || a.task_type === "gender") ? data.audio_file.locked_speaker
+              : a.task_type === "transcription" ? data.audio_file.locked_transcription
+              : false
+            return (
+              <HStack key={a.id} gap={1}>
+                <Badge
+                  colorPalette={a.status === "completed" ? "green" : a.status === "in_progress" ? "blue" : "gray"}
+                  size="sm"
+                >
+                  {a.task_type}
+                </Badge>
+                {isLocked && (
+                  <HStack gap={0.5} title="All annotators have submitted — this task is locked">
+                    <Lock size={11} color="var(--chakra-colors-orange-400)" />
+                    <Text fontSize="10px" color="orange.400">locked</Text>
+                  </HStack>
+                )}
+                {a.status === "completed" ? (
+                  <Button size="xs" colorPalette="gray" variant="ghost" loading={completing[a.id]}
+                    title="Undo — reopen this task" onClick={() => undoComplete(a)}>
+                    ↩ Undo
+                  </Button>
+                ) : (
+                  <Button size="xs" colorPalette="green" variant="outline" loading={completing[a.id]} onClick={() => markComplete(a)}>
+                    <CheckCheck size={12} /> Done
+                  </Button>
+                )}
+              </HStack>
+            )
+          })}
         </HStack>
       </Box>
 
@@ -1905,11 +1927,18 @@ function AnnotateInner() {
                             onSelect={s => setSelection({ type: "speaker", segment: s })}
                           />
                         )}
-                        {hasTask("transcription") && (
-                          trSegs.length > 0 ? (() => {
-                            const spkBounds = new Set(speakerSegs.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`))
-                            const unlinked = trSegs.filter(t => !spkBounds.has(`${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)).length
+                        {hasTask("transcription") && (() => {
+                          if (trSegs.length === 0) {
                             return (
+                              <Text fontSize="xs" color="orange.400" fontStyle="italic" py={1}>
+                                ⚠ No transcription segments in this speaker's range.
+                              </Text>
+                            )
+                          }
+                          const spkBounds = new Set(speakerSegs.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`))
+                          const unlinked = trSegs.filter(t => !spkBounds.has(`${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)).length
+                          return (
+                            <Box display="flex" flexDir="column" gap={1}>
                               <SegmentTrack
                                 label="Transcription"
                                 segments={trSegs}
@@ -1921,13 +1950,9 @@ function AnnotateInner() {
                                 onSelect={s => setSelection({ type: "transcription", segment: s })}
                                 warningCount={unlinked}
                               />
-                            )
-                          })() : (
-                            <Text fontSize="xs" color="orange.400" fontStyle="italic" py={1}>
-                              ⚠ No transcription segments in this speaker's range.
-                            </Text>
+                            </Box>
                           )
-                        )}
+                        })()}
                       </Box>
                     )}
                   </Box>
