@@ -331,6 +331,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   speakerSegments?: Segment[]
   getGenderForSpeaker?: (label: string) => string
   onSpeakerSegHover?: (id: number | null) => void
+  canEditGender?: boolean
 }>(function SegmentEditor({
   selection,
   onClose,
@@ -342,6 +343,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   speakerSegments,
   getGenderForSpeaker,
   onSpeakerSegHover,
+  canEditGender = false,
 }, ref) {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -683,25 +685,34 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
 
             <Field.Root>
               <Field.Label fontSize="xs">Gender</Field.Label>
-              <Select.Root
-                collection={genderCollection}
-                size="sm"
-                value={gender ? [gender] : []}
-                onValueChange={({ value }) => setGender(value[0] ?? "unk")}
-              >
-                <Select.Trigger>
-                  <Select.ValueText placeholder="Select gender…" />
-                </Select.Trigger>
-                <Select.Positioner>
-                  <Select.Content>
-                    {genderCollection.items.map(item => (
-                      <Select.Item key={item.value} item={item}>
-                        {item.label}
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Positioner>
-              </Select.Root>
+              {canEditGender ? (
+                <Select.Root
+                  collection={genderCollection}
+                  size="sm"
+                  value={gender ? [gender] : []}
+                  onValueChange={({ value }) => setGender(value[0] ?? "unk")}
+                >
+                  <Select.Trigger>
+                    <Select.ValueText placeholder="Select gender…" />
+                  </Select.Trigger>
+                  <Select.Positioner>
+                    <Select.Content>
+                      {genderCollection.items.map(item => (
+                        <Select.Item key={item.value} item={item}>
+                          {item.label}
+                        </Select.Item>
+                      ))}
+                    </Select.Content>
+                  </Select.Positioner>
+                </Select.Root>
+              ) : (
+                <Box px={2} py={1} bg="bg.muted" borderWidth="1px" borderColor="border" rounded="sm" fontSize="sm"
+                  color={gender && gender !== "unk" ? genderColor(gender) : "fg.subtle"}
+                >
+                  {gender && gender !== "unk" ? gender : "Unknown"}
+                  <Text as="span" fontSize="10px" color="fg.subtle" ml={2}>(read-only — no gender task assigned)</Text>
+                </Box>
+              )}
             </Field.Root>
 
             <Checkbox.Root
@@ -1832,27 +1843,26 @@ function AnnotateInner() {
                       <Text fontSize="sm" fontWeight="semibold" color="fg" flex={1}>{label ?? "Unknown"}</Text>
                       <Text fontSize="xs" color="fg.muted">{speakerSegs.length} seg{speakerSegs.length !== 1 ? "s" : ""}</Text>
 
-                      {/* Gender pills */}
-                      {(hasTask("gender") || hasTask("speaker")) && (
-                        <HStack gap={1} onClick={e => e.stopPropagation()}>
-                          {(["Male", "Female", "Mixed", "unk"] as const).map(g => (
-                            <Box
-                              key={g}
-                              as="button"
-                              px={2} py="1px" fontSize="10px" rounded="full" borderWidth="1px"
-                              borderColor={currentGender === g ? genderColor(g) : "border"}
-                              bg={currentGender === g ? genderColor(g) + "33" : "transparent"}
-                              color={currentGender === g ? genderColor(g) : "fg.muted"}
-                              cursor="pointer"
-                              transition="all 0.1s"
-                              title={g === "unk" ? "Unknown" : g}
-                              onClick={() => { if (label) propagateGender(label, g, -1) }}
-                            >
-                              {g === "unk" ? "?" : g}
-                            </Box>
-                          ))}
-                        </HStack>
-                      )}
+                      {/* Gender pills — always visible; only interactive with gender task */}
+                      <HStack gap={1} onClick={e => e.stopPropagation()}>
+                        {(["Male", "Female", "Mixed", "unk"] as const).map(g => (
+                          <Box
+                            key={g}
+                            as={hasTask("gender") ? "button" : "span"}
+                            px={2} py="1px" fontSize="10px" rounded="full" borderWidth="1px"
+                            borderColor={currentGender === g ? genderColor(g) : "border"}
+                            bg={currentGender === g ? genderColor(g) + "33" : "transparent"}
+                            color={currentGender === g ? genderColor(g) : "fg.subtle"}
+                            cursor={hasTask("gender") ? "pointer" : "default"}
+                            opacity={hasTask("gender") || currentGender === g ? 1 : 0.4}
+                            transition="all 0.1s"
+                            title={g === "unk" ? "Unknown" : g}
+                            onClick={() => { if (hasTask("gender") && label) propagateGender(label, g, -1) }}
+                          >
+                            {g === "unk" ? "?" : g}
+                          </Box>
+                        ))}
+                      </HStack>
 
                       {/* Delete speaker button */}
                       {hasTask("speaker") && (
@@ -2019,6 +2029,7 @@ function AnnotateInner() {
             }
             getGenderForSpeaker={getGenderForSpeaker}
             onSpeakerSegHover={setHoveredSpeakerSegId}
+            canEditGender={hasTask("gender")}
           />
         )}
       </Box>
