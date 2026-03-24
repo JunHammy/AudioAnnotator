@@ -10,8 +10,11 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { user, isLoading, login } = useAuth();
   const router = useRouter();
+
+  useEffect(() => { setMounted(true); }, []);
 
   // Tracks whether *this component* triggered the login — if so, skip the
   // "already logged in" effect so we don't fire two toasts on re-login.
@@ -39,7 +42,7 @@ export default function LoginPage() {
     }
   }
 
-  if (isLoading) {
+  if (!mounted || isLoading) {
     return (
       <Center minH="100vh" bg="bg">
         <Spinner size="xl" colorPalette="blue" />
