@@ -17,13 +17,19 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Redirect to login on 401
+// On auth failure, backend down, or network error — clear token and go to login.
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401 && typeof window !== "undefined") {
-      localStorage.removeItem("access_token");
-      window.location.href = "/login";
+    if (typeof window !== "undefined") {
+      const status = error.response?.status;
+      // 401 = expired/invalid token
+      // 503 = proxy couldn't reach the backend (returned by route.ts on network failure)
+      // no response at all = pure network error (axios couldn't reach the proxy)
+      if (status === 401 || status === 503 || !error.response) {
+        localStorage.removeItem("access_token");
+        window.location.href = "/login";
+      }
     }
     return Promise.reject(error);
   }

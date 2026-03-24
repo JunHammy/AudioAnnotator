@@ -521,7 +521,21 @@ async def get_annotate_data(
             .order_by(SpeakerSegment.start_time)
         )).scalars().all()
 
-        # Auto-create on first visit; emotions ALWAYS start empty (prevent bias)
+        # If existing copies don't match current speaker segments (e.g. old 2-second
+        # interval data) and the annotator hasn't started yet, regenerate from scratch.
+        if emotion_segs and speaker_segs:
+            spk_times = {(s.start_time, s.end_time) for s in speaker_segs}
+            emo_times = {(s.start_time, s.end_time) for s in emotion_segs}
+            stale = spk_times != emo_times
+            untouched = all(s.emotion is None for s in emotion_segs)
+            if stale and untouched:
+                for seg in emotion_segs:
+                    await db.delete(seg)
+                await db.flush()
+                emotion_segs = []
+
+        # Auto-create on first visit (or after stale regeneration above).
+        # Emotions always start empty — never copy JSON labels to prevent bias.
         if not emotion_segs and speaker_segs:
             for seg in speaker_segs:
                 db.add(SpeakerSegment(
@@ -531,7 +545,7 @@ async def get_annotate_data(
                     start_time=seg.start_time,
                     end_time=seg.end_time,
                     gender=seg.gender,
-                    emotion=None,        # intentionally blank — no bias from JSON labels
+                    emotion=None,
                     emotion_other=None,
                     source="annotator",
                 ))
@@ -557,7 +571,19 @@ async def get_annotate_data(
         .where(Assignment.annotator_id == current_user.id)
     )).scalars().all()
 
-    def _spk(s: SpeakerSegment) -> dict:
+    def _spk_baseline(s: SpeakerSegment) -> dict:
+        """Shared speaker segments — emotion fields stripped to prevent annotation bias."""
+        return {
+            "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
+            "speaker_label": s.speaker_label, "gender": s.gender,
+            "emotion": None, "emotion_other": None,
+            "is_ambiguous": s.is_ambiguous, "notes": s.notes,
+            "source": s.source,
+            "updated_at": s.updated_at.isoformat(),
+        }
+
+    def _spk_emotion(s: SpeakerSegment) -> dict:
+        """Annotator-owned emotion copies — emotion fields preserved."""
         return {
             "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
             "speaker_label": s.speaker_label, "gender": s.gender,
@@ -585,8 +611,8 @@ async def get_annotate_data(
             "locked_speaker": af.collaborative_locked_speaker,
             "locked_transcription": af.collaborative_locked_transcription,
         },
-        "speaker_segments": [_spk(s) for s in speaker_segs],
-        "emotion_segments": [_spk(s) for s in emotion_segs],
+        "speaker_segments": [_spk_baseline(s) for s in speaker_segs],
+        "emotion_segments": [_spk_emotion(s) for s in emotion_segs],
         "transcription_segments": [_trans(s) for s in trans_segs],
         "assignments": [
             {"id": a.id, "task_type": a.task_type, "status": a.status}

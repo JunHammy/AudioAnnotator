@@ -20,26 +20,49 @@ async function proxy(req: NextRequest, params: Params) {
     }
   });
 
-  // Stream the body directly — do NOT buffer with req.text() or req.arrayBuffer().
-  // Streaming is essential for large binary uploads (audio files).
-  // duplex: "half" is required by Node.js 18+ for streaming request bodies.
-  const body = req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined;
-  const res = await fetch(url.toString(), {
-    method: req.method,
-    headers,
-    body,
-    // @ts-expect-error — Node.js fetch requires duplex for streaming bodies
-    duplex: "half",
-  });
+  // SSE routes must stay long-lived — don't apply a timeout to them.
+  const isSSE = req.nextUrl.pathname.startsWith("/api/events");
 
-  const resHeaders = new Headers();
-  res.headers.forEach((value, key) => {
-    if (!["transfer-encoding", "connection"].includes(key.toLowerCase())) {
-      resHeaders.set(key, value);
-    }
-  });
+  // For regular routes, abort after 15 s so a dead backend fails fast instead
+  // of hanging for Node.js's default 5-minute headers timeout.
+  const controller = isSSE ? null : new AbortController();
+  const timer = controller
+    ? setTimeout(() => controller.abort(), 15_000)
+    : null;
 
-  return new NextResponse(res.body, { status: res.status, headers: resHeaders });
+  try {
+    // Stream the body directly — do NOT buffer with req.text() or req.arrayBuffer().
+    // Streaming is essential for large binary uploads (audio files).
+    // duplex: "half" is required by Node.js 18+ for streaming request bodies.
+    const body = req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined;
+    const res = await fetch(url.toString(), {
+      method: req.method,
+      headers,
+      body,
+      // @ts-expect-error — Node.js fetch requires duplex for streaming bodies
+      duplex: "half",
+      signal: controller?.signal,
+    });
+
+    if (timer) clearTimeout(timer);
+
+    const resHeaders = new Headers();
+    res.headers.forEach((value, key) => {
+      if (!["transfer-encoding", "connection"].includes(key.toLowerCase())) {
+        resHeaders.set(key, value);
+      }
+    });
+
+    return new NextResponse(res.body, { status: res.status, headers: resHeaders });
+  } catch {
+    if (timer) clearTimeout(timer);
+    // Backend is down, timed out, or otherwise unreachable.
+    // Return 503 so the client-side interceptor can redirect to login.
+    return NextResponse.json(
+      { detail: "Backend unreachable — please log in again." },
+      { status: 503 }
+    );
+  }
 }
 
 export const GET    = (req: NextRequest, { params }: { params: Params }) => proxy(req, params);
