@@ -19,7 +19,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Calendar, Lock, Pause, Play, Plus, RotateCcw, Trash2, Unlock, Users } from "lucide-react";
+import { AlertTriangle, Archive, Calendar, Lock, Pause, Play, Plus, RotateCcw, Trash2, Unlock, Users, Zap } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -114,6 +114,7 @@ export default function AssignTasksPage() {
   const [saving,       setSaving]       = useState(false);
   const [locking,      setLocking]      = useState<Record<string, boolean>>({});
   const [reopening,    setReopening]    = useState<Set<number>>(new Set());
+  const [assigningEmotionAll, setAssigningEmotionAll] = useState(false);
 
   // New assignment form state
   const [newAnnotatorId, setNewAnnotatorId] = useState<string[]>([]);
@@ -142,11 +143,12 @@ export default function AssignTasksPage() {
   // Bulk assignment modal state
   const [bulkOpen,          setBulkOpen]          = useState(false);
   const [bulkSearch,        setBulkSearch]        = useState("");
-  const [bulkSelected,      setBulkSelected]      = useState<Set<number>>(new Set());
-  const [bulkAnnotatorId,   setBulkAnnotatorId]   = useState<string[]>([]);
-  const [bulkComboLabel,    setBulkComboLabel]    = useState<string[]>([]);
-  const [bulkSaving,        setBulkSaving]        = useState(false);
-  const [bulkProgress,      setBulkProgress]      = useState<{ done: number; total: number; errors: string[] } | null>(null);
+  const [bulkSelected,        setBulkSelected]        = useState<Set<number>>(new Set());
+  const [bulkAnnotatorIds,    setBulkAnnotatorIds]    = useState<Set<number>>(new Set());
+  const [bulkAnnotatorSearch, setBulkAnnotatorSearch] = useState("");
+  const [bulkComboLabel,      setBulkComboLabel]      = useState<string[]>([]);
+  const [bulkSaving,          setBulkSaving]          = useState(false);
+  const [bulkProgress,        setBulkProgress]        = useState<{ done: number; total: number; errors: string[] } | null>(null);
   const bulkAbort = useRef(false);
 
   useEffect(() => {
@@ -179,9 +181,10 @@ export default function AssignTasksPage() {
   const bulkCombo = VALID_COMBOS.find(c => c.label === bulkComboLabel[0]);
   const bulkTasks = bulkCombo ? [...bulkCombo.tasks] : [];
 
-  const bulkAnnotatorOptions = useMemo(() => createListCollection({
-    items: annotators.map(u => ({ label: u.username, value: String(u.id) })),
-  }), [annotators]);
+  const filteredAnnotators = useMemo(() => {
+    const q = bulkAnnotatorSearch.trim().toLowerCase();
+    return q ? annotators.filter(a => a.username.toLowerCase().includes(q)) : annotators;
+  }, [annotators, bulkAnnotatorSearch]);
 
   const filteredFiles = useMemo(() => {
     const q = bulkSearch.trim().toLowerCase();
@@ -191,45 +194,50 @@ export default function AssignTasksPage() {
   function resetBulk() {
     setBulkSearch("");
     setBulkSelected(new Set());
-    setBulkAnnotatorId([]);
+    setBulkAnnotatorIds(new Set());
+    setBulkAnnotatorSearch("");
     setBulkComboLabel([]);
     setBulkProgress(null);
     bulkAbort.current = false;
   }
 
   async function runBulkAssign() {
-    if (!bulkAnnotatorId[0] || bulkTasks.length === 0 || bulkSelected.size === 0) return;
-    const annotatorId = parseInt(bulkAnnotatorId[0], 10);
+    if (bulkAnnotatorIds.size === 0 || bulkTasks.length === 0 || bulkSelected.size === 0) return;
+    const annotatorIds = [...bulkAnnotatorIds];
     const fileIds = [...bulkSelected];
+    const total = fileIds.length * annotatorIds.length;
     setBulkSaving(true);
     bulkAbort.current = false;
-    setBulkProgress({ done: 0, total: fileIds.length, errors: [] });
+    setBulkProgress({ done: 0, total, errors: [] });
 
     const errors: string[] = [];
-    for (let i = 0; i < fileIds.length; i++) {
-      if (bulkAbort.current) break;
-      const fileId = fileIds[i];
-      try {
-        await api.post("/api/assignments/batch", {
-          audio_file_id: fileId,
-          annotator_id: annotatorId,
-          task_types: bulkTasks,
-        });
-      } catch (err: unknown) {
-        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-        const fname = audioFiles.find(f => f.id === fileId)?.filename ?? `file_${fileId}`;
-        errors.push(`${fname}: ${detail ?? "failed"}`);
+    let done = 0;
+    outer: for (const fileId of fileIds) {
+      for (const annotatorId of annotatorIds) {
+        if (bulkAbort.current) break outer;
+        try {
+          await api.post("/api/assignments/batch", {
+            audio_file_id: fileId,
+            annotator_id: annotatorId,
+            task_types: bulkTasks,
+          });
+        } catch (err: unknown) {
+          const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+          const fname = audioFiles.find(f => f.id === fileId)?.filename ?? `file_${fileId}`;
+          const aname = annotators.find(a => a.id === annotatorId)?.username ?? `user_${annotatorId}`;
+          errors.push(`${aname} / ${fname}: ${detail ?? "failed"}`);
+        }
+        done++;
+        setBulkProgress({ done, total, errors: [...errors] });
       }
-      setBulkProgress({ done: i + 1, total: fileIds.length, errors: [...errors] });
     }
 
     setBulkSaving(false);
-    // Refresh the selected single-file assignments in case one of the bulk files is selected
     if (selectedFile && bulkSelected.has(selectedFile.id)) {
       const fresh = await api.get(`/api/assignments/?audio_file_id=${selectedFile.id}`);
       setAssignments(fresh.data);
     }
-    const succeeded = fileIds.length - errors.length;
+    const succeeded = done - errors.length;
     ToastWizard.standard(
       errors.length === 0 ? "success" : "warning",
       `Bulk assign complete`,
@@ -279,6 +287,38 @@ export default function AssignTasksPage() {
     } catch {
       ToastWizard.standard("error", "Delete failed", "Could not remove assignment.", 3000, true);
     }
+  }
+
+  async function assignEmotionToAll() {
+    if (!selectedFile || !selectedFile.collaborative_locked_speaker) return;
+    const annotatorIds = [...groupedAssignments.keys()];
+    if (annotatorIds.length === 0) return;
+    setAssigningEmotionAll(true);
+    let succeeded = 0;
+    const errors: string[] = [];
+    for (const annotatorId of annotatorIds) {
+      try {
+        await api.post("/api/assignments/batch", {
+          audio_file_id: selectedFile.id,
+          annotator_id: annotatorId,
+          task_types: ["emotion"],
+        });
+        succeeded++;
+      } catch (err: unknown) {
+        const username = users.find(u => u.id === annotatorId)?.username ?? `user_${annotatorId}`;
+        const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+        errors.push(`${username}: ${detail ?? "failed"}`);
+      }
+    }
+    const fresh = await api.get(`/api/assignments/?audio_file_id=${selectedFile.id}`);
+    setAssignments(fresh.data);
+    setAssigningEmotionAll(false);
+    ToastWizard.standard(
+      errors.length === 0 ? "success" : "warning",
+      "Emotion assigned",
+      `${succeeded} annotator(s) assigned${errors.length > 0 ? `, ${errors.length} skipped/failed` : ""}.`,
+      3000, true,
+    );
   }
 
   async function reopenAssignment(id: number) {
@@ -855,6 +895,23 @@ export default function AssignTasksPage() {
                       </Text>
                     </Flex>
                   )}
+
+                  {/* Quick: assign emotion to all annotators already on this file */}
+                  {selectedFile.collaborative_locked_speaker && groupedAssignments.size > 0 && (
+                    <Flex align="center" gap={2} mt={3} pt={3} borderTopWidth="1px" borderColor="border">
+                      <Button
+                        size="xs"
+                        colorPalette="purple"
+                        variant="subtle"
+                        loading={assigningEmotionAll}
+                        onClick={assignEmotionToAll}
+                      >
+                        <Zap size={12} />
+                        Assign emotion to all {groupedAssignments.size} annotator{groupedAssignments.size !== 1 ? "s" : ""}
+                      </Button>
+                      <Text fontSize="10px" color="fg.muted">skips annotators already assigned</Text>
+                    </Flex>
+                  )}
                 </Box>
 
                 {/* Coverage summary + warnings */}
@@ -904,7 +961,7 @@ export default function AssignTasksPage() {
       >
         <Dialog.Backdrop />
         <Dialog.Positioner>
-          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="760px" w="full">
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="960px" w="full">
             <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
               <Dialog.Title fontSize="md" color="fg">Bulk Assign Tasks</Dialog.Title>
             </Dialog.Header>
@@ -977,40 +1034,73 @@ export default function AssignTasksPage() {
                   </Box>
                 </Box>
 
-                {/* ── Right: annotator + combo ── */}
-                <Box w="220px" flexShrink={0}>
-                  <Text fontSize="xs" fontWeight="semibold" color="fg" mb={3}>Assignment Settings</Text>
+                {/* ── Middle: annotator selection ── */}
+                <Box flex={1} minW={0}>
+                  <HStack mb={2} justify="space-between">
+                    <Text fontSize="xs" fontWeight="semibold" color="fg">
+                      Annotators ({bulkAnnotatorIds.size} / {annotators.length} selected)
+                    </Text>
+                    <HStack gap={2}>
+                      <Button size="xs" variant="ghost" colorPalette="blue"
+                        onClick={() => setBulkAnnotatorIds(new Set(filteredAnnotators.map(a => a.id)))}>
+                        Select all
+                      </Button>
+                      <Button size="xs" variant="ghost" colorPalette="gray"
+                        onClick={() => setBulkAnnotatorIds(new Set())}>
+                        Clear
+                      </Button>
+                    </HStack>
+                  </HStack>
 
-                  <Box mb={4}>
-                    <Text fontSize="xs" color="fg.muted" mb={1}>Annotator</Text>
-                    <Select.Root
-                      collection={bulkAnnotatorOptions}
-                      value={bulkAnnotatorId}
-                      onValueChange={d => setBulkAnnotatorId(d.value)}
-                      size="sm"
-                    >
-                      <Select.HiddenSelect />
-                      <Select.Control>
-                        <Select.Trigger bg="bg.muted" borderColor="border" color="fg">
-                          <Select.ValueText placeholder="Select annotator…" />
-                        </Select.Trigger>
-                      </Select.Control>
-                      <Portal>
-                        <Select.Positioner>
-                          <Select.Content bg="bg.subtle" borderColor="border">
-                            {bulkAnnotatorOptions.items.map(item => (
-                              <Select.Item key={item.value} item={item} color="fg" _hover={{ bg: "bg.muted" }}>
-                                {item.label}
-                              </Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Portal>
-                    </Select.Root>
+                  <Input
+                    size="sm" placeholder="Search annotators…" mb={2}
+                    value={bulkAnnotatorSearch} onChange={e => setBulkAnnotatorSearch(e.target.value)}
+                    bg="bg.muted" borderColor="border" color="fg"
+                  />
+
+                  <Box
+                    borderWidth="1px" borderColor="border" rounded="md" overflow="auto"
+                    maxH="340px"
+                    css={{
+                      "&::-webkit-scrollbar": { width: "4px" },
+                      "&::-webkit-scrollbar-thumb": { background: "#4a4c54", borderRadius: "999px" },
+                    }}
+                  >
+                    {filteredAnnotators.length === 0 ? (
+                      <Box px={3} py={6} textAlign="center">
+                        <Text fontSize="xs" color="fg.muted">No annotators match.</Text>
+                      </Box>
+                    ) : filteredAnnotators.map(a => {
+                      const checked = bulkAnnotatorIds.has(a.id);
+                      return (
+                        <HStack
+                          key={a.id}
+                          px={3} py={2} gap={3} cursor="pointer"
+                          bg={checked ? "blue.900" : "transparent"}
+                          borderBottomWidth="1px" borderColor="border"
+                          _hover={{ bg: checked ? "blue.900" : "bg.muted" }}
+                          onClick={() => setBulkAnnotatorIds(prev => {
+                            const next = new Set(prev);
+                            if (next.has(a.id)) next.delete(a.id); else next.add(a.id);
+                            return next;
+                          })}
+                        >
+                          <Checkbox.Root checked={checked} onCheckedChange={() => {}} size="sm" pointerEvents="none">
+                            <Checkbox.HiddenInput />
+                            <Checkbox.Control />
+                          </Checkbox.Root>
+                          <Text fontSize="xs" color="fg">{a.username}</Text>
+                        </HStack>
+                      );
+                    })}
                   </Box>
+                </Box>
+
+                {/* ── Right: combo + summary ── */}
+                <Box w="200px" flexShrink={0}>
+                  <Text fontSize="xs" fontWeight="semibold" color="fg" mb={3}>Task Combination</Text>
 
                   <Box mb={4}>
-                    <Text fontSize="xs" color="fg.muted" mb={1}>Task Combination</Text>
                     <Select.Root
                       collection={comboCollection}
                       value={bulkComboLabel}
@@ -1038,15 +1128,13 @@ export default function AssignTasksPage() {
                   </Box>
 
                   {/* Summary */}
-                  {bulkSelected.size > 0 && bulkAnnotatorId[0] && bulkTasks.length > 0 && (
+                  {bulkSelected.size > 0 && bulkAnnotatorIds.size > 0 && bulkTasks.length > 0 && (
                     <Box px={3} py={2} bg="teal.900" borderWidth="1px" borderColor="teal.700" rounded="md" mb={3}>
                       <Text fontSize="xs" color="teal.300">
-                        Will assign <strong>{bulkTasks.join(" + ")}</strong> to{" "}
-                        <strong>{annotators.find(a => String(a.id) === bulkAnnotatorId[0])?.username}</strong>{" "}
-                        for <strong>{bulkSelected.size}</strong> file{bulkSelected.size !== 1 ? "s" : ""}.
+                        <strong>{bulkTasks.join(" + ")}</strong> → <strong>{bulkAnnotatorIds.size}</strong> annotator{bulkAnnotatorIds.size !== 1 ? "s" : ""} × <strong>{bulkSelected.size}</strong> file{bulkSelected.size !== 1 ? "s" : ""}
                       </Text>
                       <Text fontSize="10px" color="teal.400" mt={1}>
-                        Existing assignments for this annotator + file will be skipped.
+                        {bulkSelected.size * bulkAnnotatorIds.size} total assignments. Existing ones skipped.
                       </Text>
                     </Box>
                   )}
@@ -1109,11 +1197,11 @@ export default function AssignTasksPage() {
               <Button
                 size="sm" colorPalette="teal"
                 loading={bulkSaving}
-                disabled={bulkSelected.size === 0 || !bulkAnnotatorId[0] || bulkTasks.length === 0 || (bulkProgress !== null && !bulkSaving)}
+                disabled={bulkSelected.size === 0 || bulkAnnotatorIds.size === 0 || bulkTasks.length === 0 || (bulkProgress !== null && !bulkSaving)}
                 onClick={runBulkAssign}
               >
                 <Users size={14} />
-                Assign to {bulkSelected.size} file{bulkSelected.size !== 1 ? "s" : ""}
+                Assign {bulkAnnotatorIds.size || "?"} annotator{bulkAnnotatorIds.size !== 1 ? "s" : ""} × {bulkSelected.size} file{bulkSelected.size !== 1 ? "s" : ""}
               </Button>
             </Dialog.Footer>
           </Dialog.Content>

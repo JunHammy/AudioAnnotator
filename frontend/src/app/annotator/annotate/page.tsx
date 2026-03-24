@@ -973,6 +973,7 @@ function AnnotateInner() {
   }>>([])
   const isUndoing = useRef(false)
   const undoRef = useRef<() => void>(() => {})
+  const loadingRef = useRef(true)
   const [data, setData] = useState<AnnotateData | null>(null)
   const [loading, setLoading] = useState(true)
   const [waveformReady, setWaveformReady] = useState(false)
@@ -985,8 +986,6 @@ function AnnotateInner() {
   const [remarksSaving, setRemarksSaving] = useState(false)
   const [remarksOpen, setRemarksOpen] = useState(false)
   const [addingSegment, setAddingSegment] = useState(false)
-  const [addingSpeakerMode, setAddingSpeakerMode] = useState(false)
-  const [newSpeakerName, setNewSpeakerName] = useState("")
   const [segmentModal, setSegmentModal] = useState<{ open: boolean; speaker: string; start: number; end: number }>({ open: false, speaker: "", start: 0, end: 2 })
   const [trModal, setTrModal] = useState<{ open: boolean; start: number; end: number; originalText: string; alignTo: string }>({ open: false, start: 0, end: 2, originalText: "", alignTo: "" })
   const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set())
@@ -998,6 +997,7 @@ function AnnotateInner() {
 
   const load = useCallback(async () => {
     if (!fileId) return
+    setLoading(true)
     try {
       const res = await api.get(`/api/segments/annotate/${fileId}`)
       setData(res.data)
@@ -1018,8 +1018,9 @@ function AnnotateInner() {
 
   useEffect(() => { load() }, [load])
 
-  // Keep dataRef current so the polling interval always compares against latest state
+  // Keep refs current
   useEffect(() => { dataRef.current = data }, [data])
+  useEffect(() => { loadingRef.current = loading }, [loading])
 
   // ── Server-Sent Events — real-time segment sync ───────────────────────────
   useEffect(() => {
@@ -1145,7 +1146,17 @@ function AnnotateInner() {
   // Ordered unique speaker labels for per-lane rendering (null = unknown)
   const uniqueSpeakerLanes = useMemo(() => {
     if (!data) return [] as (string | null)[]
-    return [...new Set(data.speaker_segments.map(s => s.speaker_label))]
+    const labels = [...new Set(data.speaker_segments.map(s => s.speaker_label))]
+    return labels.sort((a, b) => {
+      if (a === null) return 1
+      if (b === null) return -1
+      const aM = a.match(/^speaker_(\d+)$/i)
+      const bM = b.match(/^speaker_(\d+)$/i)
+      if (aM && bM) return parseInt(aM[1]) - parseInt(bM[1])
+      if (aM) return -1
+      if (bM) return 1
+      return a.localeCompare(b)
+    })
   }, [data])
 
   // Look up the known (non-unk) gender for a given speaker label
@@ -1377,7 +1388,7 @@ function AnnotateInner() {
 
   // Waveform drag-to-select: pre-fill the Add Segment modal with the dragged range
   const handleRangeSelect = useCallback((start: number, end: number) => {
-    if (!isSpeakerAnnotator) return
+    if (!isSpeakerAnnotator || loadingRef.current) return
     setSegmentModal({ open: true, speaker: speakerLabels[0] ?? "", start: parseFloat(start.toFixed(3)), end: parseFloat(end.toFixed(3)) })
   }, [isSpeakerAnnotator, speakerLabels])
 
@@ -1430,8 +1441,14 @@ function AnnotateInner() {
     }
   }
 
-  const addSpeaker = async (label: string) => {
-    if (!data || !label.trim()) return
+  const addSpeaker = async () => {
+    if (!data) return
+    // Auto-generate the next speaker_N label
+    const nums = data.speaker_segments
+      .map(s => s.speaker_label?.match(/^speaker_(\d+)$/i))
+      .filter(Boolean)
+      .map(m => parseInt(m![1], 10))
+    const label = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 1}`
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
@@ -1440,13 +1457,11 @@ function AnnotateInner() {
         audio_file_id: data.audio_file.id,
         start_time: start,
         end_time: end,
-        speaker_label: label.trim(),
+        speaker_label: label,
         gender: "unk",
       })
-      setAddingSpeakerMode(false)
-      setNewSpeakerName("")
       await load()
-      ToastWizard.standard("success", `Speaker "${label.trim()}" added`)
+      ToastWizard.standard("success", `Speaker "${label}" added`)
     } catch (err) {
       if (isLockedError(err)) ToastWizard.standard("warning", "Locked", "All annotators have submitted — no further changes allowed.")
       else ToastWizard.standard("error", "Failed to add speaker")
@@ -1780,28 +1795,12 @@ function AnnotateInner() {
         <HStack gap={2} flexWrap="wrap">
           {/* Add Speaker */}
           {hasTask("speaker") && !data.audio_file.locked_speaker && (
-            addingSpeakerMode ? (
-              <HStack gap={1}>
-                <Input
-                  size="sm" placeholder="e.g. speaker_3" value={newSpeakerName}
-                  onChange={e => setNewSpeakerName(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === "Enter" && newSpeakerName.trim()) addSpeaker(newSpeakerName)
-                    if (e.key === "Escape") { setAddingSpeakerMode(false); setNewSpeakerName("") }
-                  }}
-                  autoFocus w="130px" bg="bg.muted" borderColor="border" color="fg"
-                />
-                <Button size="sm" colorPalette="teal" disabled={!newSpeakerName.trim()} loading={addingSegment} onClick={() => addSpeaker(newSpeakerName)}>Add</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setAddingSpeakerMode(false); setNewSpeakerName("") }}>✕</Button>
-              </HStack>
-            ) : (
-              <Button size="sm" variant="outline" colorPalette="teal" onClick={() => setAddingSpeakerMode(true)}>
-                <Plus size={13} /> Speaker
-              </Button>
-            )
+            <Button size="sm" variant="outline" colorPalette="teal" loading={addingSegment} onClick={addSpeaker}>
+              <Plus size={13} /> Speaker
+            </Button>
           )}
           {/* Add Segment */}
-          {hasTask("speaker") && !addingSpeakerMode && !data.audio_file.locked_speaker && (
+          {hasTask("speaker") && !data.audio_file.locked_speaker && (
             <Button size="sm" variant="outline" colorPalette="teal" onClick={openSegmentModal}>
               <Plus size={13} /> Segment
             </Button>
