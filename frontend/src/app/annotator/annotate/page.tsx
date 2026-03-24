@@ -72,8 +72,7 @@ interface Segment {
   end_time: number
   speaker_label: string | null
   gender: string | null
-  emotion: string | null
-  emotion_other: string | null
+  emotion: string[] | null
   is_ambiguous: boolean
   notes: string | null
   source: string
@@ -107,9 +106,6 @@ interface Selection {
 const EMOTIONS = ["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust", "Other"]
 const GENDERS = ["Male", "Female", "Mixed", "unk"]
 
-const emotionCollection = createListCollection({
-  items: EMOTIONS.map(e => ({ label: e, value: e })),
-})
 const genderCollection = createListCollection({
   items: GENDERS.map(g => ({ label: g, value: g })),
 })
@@ -144,6 +140,7 @@ const EMOTION_COLORS: Record<string, string> = {
 }
 function emotionColor(e: string | null): string {
   if (!e) return "#374151"
+  if (e.startsWith("Other:")) return EMOTION_COLORS["Other"]
   return EMOTION_COLORS[e] ?? "#374151"
 }
 
@@ -206,6 +203,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   onSelect,
   trackColor = "bg.subtle",
   warningCount,
+  warningLabel,
 }: {
   label: string
   segments: T[]
@@ -218,6 +216,7 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
   onSelect: (s: T) => void
   trackColor?: string
   warningCount?: number
+  warningLabel?: string
 }) {
   return (
     <Box>
@@ -227,7 +226,9 @@ function SegmentTrack<T extends { id: number; start_time: number; end_time: numb
         </Text>
         {warningCount != null && warningCount > 0 && (
           <Badge size="xs" colorPalette="orange">
-            {warningCount} boundary mismatch{warningCount > 1 ? "es" : ""}
+            {warningLabel
+              ? `${warningCount} ${warningLabel}`
+              : `${warningCount} boundary mismatch${warningCount > 1 ? "es" : ""}`}
           </Badge>
         )}
       </HStack>
@@ -354,11 +355,8 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [addingSpeaker, setAddingSpeaker] = useState(false)
   const [newSpeakerInput, setNewSpeakerInput] = useState("")
-  const [emotion, setEmotion] = useState<string>(
-    (selection.segment as Segment).emotion ?? ""
-  )
-  const [emotionOther, setEmotionOther] = useState<string>(
-    (selection.segment as Segment).emotion_other ?? ""
+  const [emotions, setEmotions] = useState<string[]>(
+    (selection.segment as Segment).emotion ?? []
   )
   const [gender, setGender] = useState<string>(
     (selection.segment as Segment).gender ?? "unk"
@@ -396,8 +394,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
       let res
       if (type === "emotion") {
         res = await api.patch(`/api/segments/speaker/${segment.id}`, {
-          emotion: emotion || null,
-          emotion_other: emotion === "Other" ? emotionOther || null : null,
+          emotion: emotions.length > 0 ? emotions : null,
           is_ambiguous: isAmbiguous,
           notes: notes || null,
           updated_at: segment.updated_at,
@@ -452,7 +449,13 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   // Expose imperative methods for keyboard shortcuts (after save is defined)
   useImperativeHandle(ref, () => ({
     save,
-    setEmotion,
+    setEmotion: (e: string) => {
+      if (e === "Other") {
+        setEmotions(prev => [...prev, "Other:"])
+      } else {
+        setEmotions(prev => prev.includes(e) ? prev.filter(x => x !== e) : [...prev, e])
+      }
+    },
     toggleAmbiguous: () => setIsAmbiguous(prev => !prev),
     updateTimes: (start: number, end: number) => {
       setStartTime(start)
@@ -518,39 +521,72 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
         {type === "emotion" && (
           <>
             <Field.Root>
-              <Field.Label fontSize="xs">Emotion</Field.Label>
-              <Select.Root
-                collection={emotionCollection}
-                size="sm"
-                value={emotion ? [emotion] : []}
-                onValueChange={({ value }) => setEmotion(value[0] ?? "")}
-              >
-                <Select.Trigger>
-                  <Select.ValueText placeholder="Select emotion…" />
-                </Select.Trigger>
-                <Select.Positioner>
-                  <Select.Content>
-                    {emotionCollection.items.map(item => (
-                      <Select.Item key={item.value} item={item}>
-                        {item.label}
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Positioner>
-              </Select.Root>
-            </Field.Root>
+              <Field.Label fontSize="xs">Emotion <Text as="span" color="fg.subtle" fontSize="9px">(keys 1–7 toggle, 8 adds Other)</Text></Field.Label>
+              <VStack align="stretch" gap={1.5} mt={1}>
+                {["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust"].map((em, i) => (
+                  <Checkbox.Root
+                    key={em}
+                    size="sm"
+                    checked={emotions.includes(em)}
+                    onCheckedChange={({ checked }) =>
+                      setEmotions(prev => checked ? [...prev, em] : prev.filter(x => x !== em))
+                    }
+                  >
+                    <Checkbox.HiddenInput />
+                    <Checkbox.Control />
+                    <Checkbox.Label fontSize="xs">
+                      {em} <Text as="span" color="fg.subtle" fontSize="9px">({i + 1})</Text>
+                    </Checkbox.Label>
+                  </Checkbox.Root>
+                ))}
 
-            {emotion === "Other" && (
-              <Field.Root>
-                <Field.Label fontSize="xs">Specify other emotion</Field.Label>
-                <Textarea
-                  size="sm"
-                  value={emotionOther}
-                  onChange={e => setEmotionOther(e.target.value)}
-                  rows={2}
-                />
-              </Field.Root>
-            )}
+                {/* Other entries */}
+                {emotions.filter(e => e.startsWith("Other:")).map((entry, idx) => {
+                  const desc = entry.slice(6)
+                  return (
+                    <HStack key={idx} gap={1}>
+                      <Input
+                        size="xs"
+                        placeholder="Describe…"
+                        value={desc}
+                        onChange={ev => {
+                          const newEntry = `Other:${ev.target.value}`
+                          setEmotions(prev => {
+                            const others = prev.filter(e => e.startsWith("Other:"))
+                            others[idx] = newEntry
+                            return [...prev.filter(e => !e.startsWith("Other:")), ...others]
+                          })
+                        }}
+                        autoFocus={desc === ""}
+                      />
+                      <IconButton
+                        size="xs"
+                        variant="ghost"
+                        aria-label="Remove Other"
+                        onClick={() =>
+                          setEmotions(prev => {
+                            const others = prev.filter(e => e.startsWith("Other:"))
+                            others.splice(idx, 1)
+                            return [...prev.filter(e => !e.startsWith("Other:")), ...others]
+                          })
+                        }
+                      >
+                        ✕
+                      </IconButton>
+                    </HStack>
+                  )
+                })}
+
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  justifyContent="flex-start"
+                  onClick={() => setEmotions(prev => [...prev, "Other:"])}
+                >
+                  <Plus size={12} /> Add Other…
+                </Button>
+              </VStack>
+            </Field.Root>
 
             <Checkbox.Root
               checked={isAmbiguous}
@@ -1316,7 +1352,7 @@ function AnnotateInner() {
       let prevValues: Record<string, unknown>
       if (type === "emotion") {
         const s = previous as Segment
-        prevValues = { emotion: s.emotion ?? null, emotion_other: s.emotion_other ?? null, is_ambiguous: s.is_ambiguous ?? false, notes: s.notes ?? null }
+        prevValues = { emotion: s.emotion ?? null, is_ambiguous: s.is_ambiguous ?? false, notes: s.notes ?? null }
       } else if (type === "speaker") {
         const s = previous as Segment
         prevValues = { speaker_label: s.speaker_label ?? null, gender: s.gender ?? null, is_ambiguous: s.is_ambiguous ?? false, notes: s.notes ?? null, start_time: s.start_time, end_time: s.end_time }
@@ -1598,7 +1634,7 @@ function AnnotateInner() {
           e.preventDefault()
           const d = dataRef.current
           if (!d || !d.assignments.some(a => a.task_type === "emotion")) break
-          const unfinished = d.emotion_segments.find(seg => seg.emotion === null)
+          const unfinished = d.emotion_segments.find(seg => !seg.emotion?.length)
           if (unfinished) setSelection({ type: "emotion", segment: unfinished })
           break
         }
@@ -1668,7 +1704,7 @@ function AnnotateInner() {
   const filteredEmotionSegments = useMemo(() => {
     if (!data) return []
     const segs = data.emotion_segments
-    if (segmentFilter === "unannotated") return segs.filter(s => s.emotion === null)
+    if (segmentFilter === "unannotated") return segs.filter(s => !s.emotion?.length)
     if (segmentFilter === "ambiguous") return segs.filter(s => s.is_ambiguous)
     if (segmentFilter === "has_notes") return segs.filter(s => s.notes && s.notes.trim().length > 0)
     return segs
@@ -1922,8 +1958,35 @@ function AnnotateInner() {
           {data.assignments.length > 0 && (
             <VStack align="stretch" gap={3}>
 
+              {/* Emotion filter chips — shown when emotion task assigned */}
+              {hasTask("emotion") && !emotionGated && (
+                <Flex gap={1.5} align="center" flexWrap="wrap">
+                  {(["all", "unannotated", "ambiguous", "has_notes"] as const).map(f => {
+                    const label = f === "all" ? `All (${data.emotion_segments.length})`
+                      : f === "unannotated" ? `Unannotated (${data.emotion_segments.filter(s => !s.emotion?.length).length})`
+                      : f === "ambiguous" ? `Ambiguous (${data.emotion_segments.filter(s => s.is_ambiguous).length})`
+                      : `Has Notes (${data.emotion_segments.filter(s => s.notes?.trim()).length})`
+                    return (
+                      <Box
+                        key={f}
+                        as="button"
+                        px={2} py="2px" fontSize="10px" rounded="full" borderWidth="1px"
+                        borderColor={segmentFilter === f ? "blue.400" : "border"}
+                        bg={segmentFilter === f ? "blue.900" : "bg.muted"}
+                        color={segmentFilter === f ? "blue.300" : "fg.muted"}
+                        cursor="pointer"
+                        transition="all 0.1s"
+                        onClick={() => setSegmentFilter(f)}
+                      >
+                        {label}
+                      </Box>
+                    )
+                  })}
+                </Flex>
+              )}
+
               {/* Per-speaker accordion sections */}
-              {(hasTask("speaker") || hasTask("transcription") || hasTask("gender")) && uniqueSpeakerLanes.map(label => {
+              {(hasTask("speaker") || hasTask("transcription") || hasTask("gender") || (hasTask("emotion") && !emotionGated)) && uniqueSpeakerLanes.map(label => {
                 const key = label ?? "__null__"
                 const isOpen = openAccordions.has(key)
                 const speakerSegs = data.speaker_segments.filter(s => s.speaker_label === label)
@@ -2029,6 +2092,32 @@ function AnnotateInner() {
                             </Box>
                           )
                         })()}
+                        {hasTask("emotion") && !emotionGated && (() => {
+                          const emoSegs = filteredEmotionSegments.filter(s => s.speaker_label === label)
+                          if (emoSegs.length === 0) return null
+                          const unannotated = emoSegs.filter(s => !s.emotion?.length).length
+                          return (
+                            <SegmentTrack
+                              label="Emotion"
+                              segments={emoSegs}
+                              duration={duration}
+                              currentTime={currentTime}
+                              selectedId={selection?.type === "emotion" ? selection.segment.id : undefined}
+                              getColor={(s: Segment) => s.emotion?.length ? emotionColor(s.emotion[0]) : "#374151"}
+                              getLabel={(s: Segment) => {
+                                if (!s.emotion?.length) return "—"
+                                if (s.emotion.length === 1) {
+                                  const e = s.emotion[0]
+                                  return e.startsWith("Other:") ? `Other(${e.slice(6)})` : e
+                                }
+                                return `${s.emotion.length} emotions`
+                              }}
+                              onSelect={s => setSelection({ type: "emotion", segment: s })}
+                              warningCount={unannotated > 0 ? unannotated : undefined}
+                              warningLabel="unannotated"
+                            />
+                          )
+                        })()}
                       </Box>
                     )}
                   </Box>
@@ -2053,45 +2142,6 @@ function AnnotateInner() {
                 )
               })()}
 
-              {/* Emotion track — shown below all speaker sections */}
-              {hasTask("emotion") && !emotionGated && (
-                <Box>
-                  {/* Filter chips */}
-                  <Flex gap={1.5} mb={2} align="center" flexWrap="wrap">
-                    {(["all", "unannotated", "ambiguous", "has_notes"] as const).map(f => {
-                      const label = f === "all" ? `All (${data.emotion_segments.length})`
-                        : f === "unannotated" ? `Unannotated (${data.emotion_segments.filter(s => s.emotion === null).length})`
-                        : f === "ambiguous" ? `Ambiguous (${data.emotion_segments.filter(s => s.is_ambiguous).length})`
-                        : `Has Notes (${data.emotion_segments.filter(s => s.notes?.trim()).length})`
-                      return (
-                        <Box
-                          key={f}
-                          as="button"
-                          px={2} py="2px" fontSize="10px" rounded="full" borderWidth="1px"
-                          borderColor={segmentFilter === f ? "blue.400" : "border"}
-                          bg={segmentFilter === f ? "blue.900" : "bg.muted"}
-                          color={segmentFilter === f ? "blue.300" : "fg.muted"}
-                          cursor="pointer"
-                          transition="all 0.1s"
-                          onClick={() => setSegmentFilter(f)}
-                        >
-                          {label}
-                        </Box>
-                      )
-                    })}
-                  </Flex>
-                  <SegmentTrack
-                    label="Emotion (my annotations)"
-                    segments={filteredEmotionSegments}
-                    duration={duration}
-                    currentTime={currentTime}
-                    selectedId={selection?.type === "emotion" ? selection.segment.id : undefined}
-                    getColor={(s: Segment) => emotionColor(s.emotion)}
-                    getLabel={(s: Segment) => s.emotion ?? "—"}
-                    onSelect={s => setSelection({ type: "emotion", segment: s })}
-                  />
-                </Box>
-              )}
             </VStack>
           )}
 

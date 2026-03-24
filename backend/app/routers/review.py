@@ -1,24 +1,21 @@
 """
-Review & Finalize endpoints.
+Review endpoints.
 
-Emotion:   3-tier resolution (Tier1=unanimous, Tier2≥0.65, Tier3=manual)
+Emotion:   per-annotator tag lists with aggregation (no finalization)
 Collab:    speaker / gender / transcription segments with edit history
+IAA:       inter-annotator agreement metrics
 """
-from datetime import datetime, timezone
 from itertools import combinations as _combinations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 from sqlalchemy import distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
-from app.services.audit import write_audit_log
 from app.models.models import (
     AudioFile,
-    FinalAnnotation,
     SegmentEditHistory,
     SpeakerSegment,
     TranscriptionSegment,
@@ -28,9 +25,6 @@ from app.models.models import (
 router = APIRouter()
 
 _VALID_COLLAB = {"speaker", "gender", "transcription"}
-
-# Algorithm lives in the shared service module
-from app.services.emotion import compute_tier as _compute_tier
 
 
 # ─── File listing ──────────────────────────────────────────────────────────────
@@ -57,12 +51,6 @@ async def list_review_files(
             .where(SpeakerSegment.source == "pre_annotated")
         )).scalar_one()
 
-        finalized_emotions = (await db.execute(
-            select(func.count(FinalAnnotation.id))
-            .where(FinalAnnotation.audio_file_id == af.id)
-            .where(FinalAnnotation.annotation_type == "emotion")
-        )).scalar_one()
-
         out.append({
             "id": af.id,
             "filename": af.filename,
@@ -70,7 +58,6 @@ async def list_review_files(
             "language": af.language,
             "total_segments": total_segments,
             "emotion_annotators": emotion_annotators,
-            "finalized_emotions": finalized_emotions,
             "collaborative_locked_speaker": af.collaborative_locked_speaker,
             "collaborative_locked_gender": af.collaborative_locked_gender,
             "collaborative_locked_transcription": af.collaborative_locked_transcription,
@@ -87,181 +74,54 @@ async def get_emotion_review(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    """Emotion segments grouped by baseline segment, with tier classification."""
-    baseline_result = await db.execute(
+    """Per-annotator emotion tag lists per segment, with aggregation counts."""
+    baseline = (await db.execute(
         select(SpeakerSegment)
         .where(SpeakerSegment.audio_file_id == file_id)
         .where(SpeakerSegment.source == "pre_annotated")
         .order_by(SpeakerSegment.start_time)
-    )
-    baseline = baseline_result.scalars().all()
+    )).scalars().all()
     if not baseline:
         raise HTTPException(status_code=404, detail="No baseline segments found.")
 
-    # Annotator copies with user info
-    ann_result = await db.execute(
-        select(SpeakerSegment, User.username, User.trust_score)
+    ann_rows = (await db.execute(
+        select(SpeakerSegment, User.username)
         .join(User, SpeakerSegment.annotator_id == User.id)
         .where(SpeakerSegment.audio_file_id == file_id)
         .where(SpeakerSegment.source == "annotator")
         .order_by(SpeakerSegment.start_time)
-    )
-    ann_rows = ann_result.all()
+    )).all()
 
-    # Map (start, end) -> annotations list
+    # Map (start, end) → list of annotator entries
     seg_map: dict[tuple, list] = {}
-    for seg, username, trust in ann_rows:
+    for seg, username in ann_rows:
         key = (round(seg.start_time, 3), round(seg.end_time, 3))
         seg_map.setdefault(key, []).append({
-            "annotator_id": seg.annotator_id,
             "username": username,
-            "trust_score": trust,
-            "emotion": seg.emotion,
-            "emotion_other": seg.emotion_other,
+            "emotions": seg.emotion or [],
             "is_ambiguous": seg.is_ambiguous,
-            "segment_id": seg.id,
         })
-
-    # Existing final annotations
-    fa_result = await db.execute(
-        select(FinalAnnotation)
-        .where(FinalAnnotation.audio_file_id == file_id)
-        .where(FinalAnnotation.annotation_type == "emotion")
-    )
-    fa_map: dict[int, FinalAnnotation] = {
-        fa.segment_id: fa for fa in fa_result.scalars().all()
-    }
 
     out = []
     for seg in baseline:
         key = (round(seg.start_time, 3), round(seg.end_time, 3))
         annotations = seg_map.get(key, [])
-        tier_info = _compute_tier(annotations)
-        final = fa_map.get(seg.id)
+
+        # Count how many annotators selected each emotion label
+        emotion_counts: dict[str, int] = {}
+        for ann in annotations:
+            for label in ann["emotions"]:
+                emotion_counts[label] = emotion_counts.get(label, 0) + 1
 
         out.append({
             "segment_id": seg.id,
             "start_time": seg.start_time,
             "end_time": seg.end_time,
             "speaker_label": seg.speaker_label,
-            "tier": tier_info["tier"],
-            "winning_label": tier_info["winning_label"],
-            "confidence": tier_info["confidence"],
             "annotations": annotations,
-            "finalized": final is not None,
-            "final_emotion": final.data.get("emotion") if final else None,
-            "final_emotion_other": final.data.get("emotion_other") if final else None,
-            "final_method": final.decision_method if final else None,
+            "emotion_counts": emotion_counts,
         })
     return out
-
-
-class EmotionDecision(BaseModel):
-    segment_id: int
-    emotion: str
-    emotion_other: str | None = None
-    decision_method: str  # unanimous | weighted | manual
-
-
-class EmotionDecisionBatch(BaseModel):
-    decisions: list[EmotionDecision]
-
-
-@router.post("/{file_id}/emotion/decide")
-async def decide_emotion(
-    file_id: int,
-    body: EmotionDecision,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    seg = (await db.execute(
-        select(SpeakerSegment)
-        .where(SpeakerSegment.id == body.segment_id)
-        .where(SpeakerSegment.audio_file_id == file_id)
-    )).scalar_one_or_none()
-    if not seg:
-        raise HTTPException(status_code=404, detail="Segment not found.")
-
-    fa = (await db.execute(
-        select(FinalAnnotation)
-        .where(FinalAnnotation.audio_file_id == file_id)
-        .where(FinalAnnotation.segment_id == body.segment_id)
-        .where(FinalAnnotation.annotation_type == "emotion")
-    )).scalar_one_or_none()
-
-    now = datetime.now(timezone.utc)
-    emotion_data = {"emotion": body.emotion}
-    if body.emotion == "Other" and body.emotion_other:
-        emotion_data["emotion_other"] = body.emotion_other
-
-    if fa:
-        fa.data = emotion_data
-        fa.decision_method = body.decision_method
-        fa.finalized_by = admin.id
-        fa.finalized_at = now
-        fa.version = fa.version + 1
-    else:
-        db.add(FinalAnnotation(
-            audio_file_id=file_id,
-            segment_id=body.segment_id,
-            annotation_type="emotion",
-            data=emotion_data,
-            decision_method=body.decision_method,
-            finalized_by=admin.id,
-            finalized_at=now,
-        ))
-
-    await db.flush()
-    await write_audit_log(db, admin.id, "finalize_emotion", "speaker_segment", body.segment_id,
-                          {"file_id": file_id, "emotion": body.emotion, "method": body.decision_method})
-    return {"segment_id": body.segment_id, "emotion": body.emotion, "method": body.decision_method}
-
-
-@router.post("/{file_id}/emotion/decide-batch")
-async def decide_emotion_batch(
-    file_id: int,
-    body: EmotionDecisionBatch,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    now = datetime.now(timezone.utc)
-    accepted = 0
-    for d in body.decisions:
-        fa = (await db.execute(
-            select(FinalAnnotation)
-            .where(FinalAnnotation.audio_file_id == file_id)
-            .where(FinalAnnotation.segment_id == d.segment_id)
-            .where(FinalAnnotation.annotation_type == "emotion")
-        )).scalar_one_or_none()
-
-        emotion_data = {"emotion": d.emotion}
-        if d.emotion == "Other" and d.emotion_other:
-            emotion_data["emotion_other"] = d.emotion_other
-
-        if fa:
-            fa.data = emotion_data
-            fa.decision_method = d.decision_method
-            fa.finalized_by = admin.id
-            fa.finalized_at = now
-            fa.version = fa.version + 1
-        else:
-            db.add(FinalAnnotation(
-                audio_file_id=file_id,
-                segment_id=d.segment_id,
-                annotation_type="emotion",
-                data=emotion_data,
-                decision_method=d.decision_method,
-                finalized_by=admin.id,
-                finalized_at=now,
-            ))
-        accepted += 1
-
-    await db.flush()
-    await write_audit_log(db, admin.id, "finalize_emotion_batch", "audio_file", file_id,
-                          {"accepted": accepted,
-                           "segment_ids": [d.segment_id for d in body.decisions],
-                           "emotions": {str(d.segment_id): d.emotion for d in body.decisions}})
-    return {"accepted": accepted}
 
 
 # ─── Collaborative review ─────────────────────────────────────────────────────
@@ -347,7 +207,9 @@ async def get_iaa_metrics(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    """Compute Inter-Annotator Agreement for emotion labels on a file."""
+    """Compute Inter-Annotator Agreement for emotion labels on a file.
+    Two annotators agree on a segment when their sorted emotion tag sets are identical.
+    """
     rows = (await db.execute(
         select(
             SpeakerSegment.annotator_id,
@@ -359,10 +221,12 @@ async def get_iaa_metrics(
         .where(SpeakerSegment.source == "annotator")
     )).fetchall()
 
-    seg_map: dict[tuple, dict[int, Optional[str]]] = {}
+    # Map (start, end) → {annotator_id: frozenset of emotion tags}
+    seg_map: dict[tuple, dict[int, frozenset]] = {}
     for annotator_id, start, end, emotion in rows:
         key = (round(float(start), 3), round(float(end), 3))
-        seg_map.setdefault(key, {})[annotator_id] = emotion
+        tags = frozenset(emotion) if emotion else frozenset()
+        seg_map.setdefault(key, {})[annotator_id] = tags
 
     all_annotators = {ann for labels in seg_map.values() for ann in labels}
     multi = {k: v for k, v in seg_map.items() if len(v) >= 2}
@@ -377,7 +241,7 @@ async def get_iaa_metrics(
             "fleiss_kappa": None,
         }
 
-    # Pairwise percent agreement (averaged over all annotator pairs per segment)
+    # Pairwise percent agreement: agree when tag sets are identical
     pair_agreements: list[int] = []
     for labels in multi.values():
         ids = list(labels.keys())
@@ -385,7 +249,7 @@ async def get_iaa_metrics(
             pair_agreements.append(1 if labels[a1] == labels[a2] else 0)
     percent_agreement = round(sum(pair_agreements) / len(pair_agreements), 3) if pair_agreements else None
 
-    # Fleiss' kappa (only when all multi-annotated segments have the same n raters)
+    # Fleiss' kappa — treat each unique tag-set as a distinct category
     n_vals = [len(v) for v in multi.values()]
     fleiss_kappa = None
     if len(set(n_vals)) == 1:
@@ -394,18 +258,16 @@ async def get_iaa_metrics(
             N = len(multi)
             subjects = list(multi.values())
             total_ratings = N * n
-            cat_counts: dict[str, int] = {}
+            cat_counts: dict[frozenset, int] = {}
             for s in subjects:
-                for emotion in s.values():
-                    label = emotion or "None"
-                    cat_counts[label] = cat_counts.get(label, 0) + 1
+                for tag_set in s.values():
+                    cat_counts[tag_set] = cat_counts.get(tag_set, 0) + 1
             P_e = sum((c / total_ratings) ** 2 for c in cat_counts.values())
             P_i_list = []
             for s in subjects:
-                n_ij: dict[str, int] = {}
-                for emotion in s.values():
-                    label = emotion or "None"
-                    n_ij[label] = n_ij.get(label, 0) + 1
+                n_ij: dict[frozenset, int] = {}
+                for tag_set in s.values():
+                    n_ij[tag_set] = n_ij.get(tag_set, 0) + 1
                 P_i = sum(v * (v - 1) for v in n_ij.values()) / (n * (n - 1))
                 P_i_list.append(P_i)
             P_bar = sum(P_i_list) / N
@@ -422,7 +284,7 @@ async def get_iaa_metrics(
     }
 
 
-async def _get_history(db: AsyncSession, seg_type: str, seg_id: int) -> list[dict]:
+async def _get_history(db, seg_type: str, seg_id: int) -> list[dict]:
     rows = (await db.execute(
         select(SegmentEditHistory, User.username)
         .join(User, SegmentEditHistory.edited_by == User.id)

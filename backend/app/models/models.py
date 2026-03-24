@@ -101,8 +101,7 @@ class SpeakerSegment(Base):
     start_time = Column(Float, nullable=False)
     end_time = Column(Float, nullable=False)
     gender = Column(String(20), nullable=True)    # Male | Female | Mixed | unk
-    emotion = Column(String(50), nullable=True)   # Angry | Disgusted | ... | Other
-    emotion_other = Column(String(255), nullable=True)
+    emotion = Column(JSON, nullable=True)         # list of emotion tags, e.g. ["Happy", "Other:Excited"]
     notes = Column(Text, nullable=True)
     is_ambiguous = Column(Boolean, nullable=False, default=False)
     source = Column(String(50), nullable=True)    # original | annotator

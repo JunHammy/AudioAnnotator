@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, field_validator, model_validator
 
@@ -348,8 +348,7 @@ class SpeakerSegmentResponse(BaseModel):
     start_time:    float
     end_time:      float
     gender:        Optional[str]
-    emotion:       Optional[str]
-    emotion_other: Optional[str]
+    emotion:       Optional[List[str]]
     notes:         Optional[str]
     is_ambiguous:  bool
     source:        Optional[str]
@@ -357,14 +356,13 @@ class SpeakerSegmentResponse(BaseModel):
 
 
 class SpeakerSegmentUpdate(BaseModel):
-    speaker_label: Optional[str]   = None
-    gender:        Optional[str]   = None
-    emotion:       Optional[str]   = None
-    emotion_other: Optional[str]   = None
-    notes:         Optional[str]   = None
-    is_ambiguous:  Optional[bool]  = None
-    start_time:    Optional[float] = None   # time editing (pre_annotated only)
-    end_time:      Optional[float] = None   # time editing (pre_annotated only)
+    speaker_label: Optional[str]        = None
+    gender:        Optional[str]        = None
+    emotion:       Optional[List[str]]  = None
+    notes:         Optional[str]        = None
+    is_ambiguous:  Optional[bool]       = None
+    start_time:    Optional[float]      = None   # time editing (pre_annotated only)
+    end_time:      Optional[float]      = None   # time editing (pre_annotated only)
     updated_at:    datetime  # Optimistic locking: client sends last-known updated_at
 
     @field_validator("gender")
@@ -376,9 +374,17 @@ class SpeakerSegmentUpdate(BaseModel):
 
     @field_validator("emotion")
     @classmethod
-    def validate_emotion(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in _VALID_EMOTIONS:
-            raise ValueError(f"emotion must be one of: {sorted(_VALID_EMOTIONS)}")
+    def validate_emotion(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return v
+        for item in v:
+            if item in _VALID_EMOTIONS:
+                continue
+            if item.startswith("Other:"):
+                continue
+            raise ValueError(
+                f"Each emotion must be one of {sorted(_VALID_EMOTIONS)} or start with 'Other:'"
+            )
         return v
 
 

@@ -78,7 +78,10 @@ async def export_file(
     )
 
     if format == "json":
-        payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        # Expose as { "filename.wav": { ... } } — strip internal _filename key
+        fname = data["_filename"]
+        output = {fname: data[fname]}
+        payload = json.dumps(output, ensure_ascii=False, indent=2).encode("utf-8")
         return Response(
             content=payload,
             media_type="application/json",
@@ -142,12 +145,13 @@ async def export_dataset(
             "dataset_id": ds.id,
             "dataset_name": ds.name,
             "file_count": len(all_data),
-            "files": [fd["filename"] for fd in all_data],
+            "files": [fd["_filename"] for fd in all_data],
         }
         entries: dict[str, bytes] = {"manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")}
         for fd in all_data:
-            stem = _safe_stem(fd["filename"])
-            entries[f"{stem}.json"] = json.dumps(fd, ensure_ascii=False, indent=2).encode("utf-8")
+            fname = fd["_filename"]
+            stem = _safe_stem(fname)
+            entries[f"{stem}.json"] = json.dumps({fname: fd[fname]}, ensure_ascii=False, indent=2).encode("utf-8")
         zip_bytes = build_zip(entries)
         return Response(
             content=zip_bytes,
@@ -202,12 +206,13 @@ async def export_all(
         manifest = {
             "scope": "all",
             "file_count": len(all_data),
-            "files": [fd["filename"] for fd in all_data],
+            "files": [fd["_filename"] for fd in all_data],
         }
         entries: dict[str, bytes] = {"manifest.json": json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")}
         for fd in all_data:
-            stem = _safe_stem(fd["filename"])
-            entries[f"{stem}.json"] = json.dumps(fd, ensure_ascii=False, indent=2).encode("utf-8")
+            fname = fd["_filename"]
+            stem = _safe_stem(fname)
+            entries[f"{stem}.json"] = json.dumps({fname: fd[fname]}, ensure_ascii=False, indent=2).encode("utf-8")
         zip_bytes = build_zip(entries)
         return Response(
             content=zip_bytes,

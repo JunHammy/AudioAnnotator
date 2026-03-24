@@ -15,7 +15,6 @@ from app.schemas.schemas import (
     AssignmentResponse,
     AssignmentStatusUpdate,
 )
-from app.services.emotion import auto_finalize_emotions
 from app.services.audit import write_audit_log
 from app.services.notifications import create_notification
 from app.services.sse import sse_manager
@@ -204,21 +203,6 @@ async def update_assignment_status(
                     setattr(af, f"collaborative_locked_{assignment.task_type}", True)
                     await db.flush()
 
-        # Auto-finalize emotion Tier 1 + 2 when ALL emotion annotators complete.
-        # Admin only needs to manually resolve Tier 3 (low-confidence conflicts).
-        if assignment.task_type == "emotion":
-            all_emotion = (await db.execute(
-                select(Assignment)
-                .where(Assignment.audio_file_id == assignment.audio_file_id)
-                .where(Assignment.task_type == "emotion")
-            )).scalars().all()
-
-            if all_emotion and all(a.status == "completed" for a in all_emotion):
-                await auto_finalize_emotions(
-                    db=db,
-                    file_id=assignment.audio_file_id,
-                    finalized_by=assignment.annotator_id,
-                )
 
     await db.flush()
     await db.refresh(assignment)

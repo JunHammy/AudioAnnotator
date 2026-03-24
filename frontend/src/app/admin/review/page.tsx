@@ -9,28 +9,23 @@ import {
   Heading,
   IconButton,
   Input,
-  Select,
   Spinner,
   Table,
   Tabs,
   Text,
   Textarea,
   VStack,
-  createListCollection,
 } from "@chakra-ui/react"
 import {
   AlertTriangle,
-  CheckCircle,
   ChevronDown,
   ChevronRight,
   Clock,
   Download,
   Lock,
   MessageSquare,
-  Pencil,
   Send,
   Unlock,
-  X,
 } from "lucide-react"
 import api, { downloadExport } from "@/lib/axios"
 import ToastWizard from "@/lib/toastWizard"
@@ -44,7 +39,6 @@ interface ReviewFile {
   language: string | null
   total_segments: number
   emotion_annotators: number
-  finalized_emotions: number
   collaborative_locked_speaker: boolean
   collaborative_locked_gender: boolean
   collaborative_locked_transcription: boolean
@@ -52,14 +46,10 @@ interface ReviewFile {
   admin_response: string | null
 }
 
-interface AnnotatorVote {
-  annotator_id: number
+interface EmotionAnnotatorEntry {
   username: string
-  trust_score: number
-  emotion: string | null
-  emotion_other: string | null
+  emotions: string[]
   is_ambiguous: boolean
-  segment_id: number
 }
 
 interface EmotionSegmentReview {
@@ -67,14 +57,8 @@ interface EmotionSegmentReview {
   start_time: number
   end_time: number
   speaker_label: string | null
-  tier: 1 | 2 | 3
-  winning_label: string | null
-  confidence: number
-  annotations: AnnotatorVote[]
-  finalized: boolean
-  final_emotion: string | null
-  final_emotion_other: string | null
-  final_method: string | null
+  annotations: EmotionAnnotatorEntry[]
+  emotion_counts: Record<string, number>
 }
 
 interface EditEntry {
@@ -107,16 +91,9 @@ function fmtTime(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
-function tierBadge(tier: 1 | 2 | 3) {
-  if (tier === 1) return <Badge colorPalette="green" size="sm">Tier 1 ✓</Badge>
-  if (tier === 2) return <Badge colorPalette="yellow" size="sm">Tier 2</Badge>
-  return <Badge colorPalette="red" size="sm">Tier 3</Badge>
+function emotionLabel(e: string): string {
+  return e.startsWith("Other:") ? `Other(${e.slice(6)})` : e
 }
-
-const EMOTIONS = ["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust", "Other"]
-const emotionCollection = createListCollection({
-  items: EMOTIONS.map(e => ({ label: e, value: e })),
-})
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -210,12 +187,6 @@ function iaaColor(score: number | null): string {
 function EmotionTab({ fileId }: { fileId: number }) {
   const [segments, setSegments] = useState<EmotionSegmentReview[]>([])
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<"all" | "1" | "2" | "3" | "unresolved">("all")
-  const [decisions, setDecisions] = useState<Record<number, string>>({})
-  const [decisionOthers, setDecisionOthers] = useState<Record<number, string>>({})
-  const [saving, setSaving] = useState<Record<number, boolean>>({})
-  const [batchSaving, setBatchSaving] = useState(false)
-  const [overriding, setOverriding] = useState<Set<number>>(new Set())
   const [iaa, setIaa] = useState<IAAMetrics | null>(null)
 
   const load = useCallback(async () => {
@@ -224,18 +195,6 @@ function EmotionTab({ fileId }: { fileId: number }) {
     try {
       const res = await api.get(`/api/review/${fileId}/emotion`)
       setSegments(res.data)
-      const init: Record<number, string> = {}
-      const initOthers: Record<number, string> = {}
-      for (const s of res.data) {
-        if (s.final_emotion) {
-          init[s.segment_id] = s.final_emotion
-          if (s.final_emotion_other) initOthers[s.segment_id] = s.final_emotion_other
-        } else if (s.winning_label && s.tier <= 2) {
-          init[s.segment_id] = s.winning_label
-        }
-      }
-      setDecisions(init)
-      setDecisionOthers(initOthers)
     } catch {
       ToastWizard.standard("error", "Failed to load emotion review data")
     } finally {
@@ -245,71 +204,7 @@ function EmotionTab({ fileId }: { fileId: number }) {
 
   useEffect(() => { load() }, [load])
 
-  const saveDecision = async (segId: number, method: string) => {
-    const emotion = decisions[segId]
-    if (!emotion) return
-    const emotionOther = emotion === "Other" ? (decisionOthers[segId] || null) : null
-    setSaving(s => ({ ...s, [segId]: true }))
-    try {
-      await api.post(`/api/review/${fileId}/emotion/decide`, {
-        segment_id: segId,
-        emotion,
-        emotion_other: emotionOther,
-        decision_method: method,
-      })
-      setSegments(prev =>
-        prev.map(s => s.segment_id === segId
-          ? { ...s, finalized: true, final_emotion: emotion, final_emotion_other: emotionOther, final_method: method }
-          : s
-        )
-      )
-      ToastWizard.standard("success", "Decision saved")
-    } catch {
-      ToastWizard.standard("error", "Failed to save decision")
-    } finally {
-      setSaving(s => ({ ...s, [segId]: false }))
-    }
-  }
-
-  const batchAccept = async (minTier: number) => {
-    const toAccept = segments.filter(
-      s => s.tier <= minTier && s.winning_label && !s.finalized
-    )
-    if (!toAccept.length) {
-      ToastWizard.standard("info", "Nothing to accept")
-      return
-    }
-    setBatchSaving(true)
-    try {
-      await api.post(`/api/review/${fileId}/emotion/decide-batch`, {
-        decisions: toAccept.map(s => ({
-          segment_id: s.segment_id,
-          emotion: s.winning_label!,
-          decision_method: s.tier === 1 ? "unanimous" : "weighted",
-        })),
-      })
-      await load()
-      ToastWizard.standard("success", `Accepted ${toAccept.length} segments`)
-    } catch {
-      ToastWizard.standard("error", "Batch accept failed")
-    } finally {
-      setBatchSaving(false)
-    }
-  }
-
-  const filtered = segments.filter(s => {
-    if (filter === "1") return s.tier === 1
-    if (filter === "2") return s.tier === 2
-    if (filter === "3") return s.tier === 3
-    if (filter === "unresolved") return !s.finalized
-    return true
-  })
-
   if (loading) return <Spinner />
-
-  const tier1Count = segments.filter(s => s.tier === 1 && !s.finalized).length
-  const tier2Count = segments.filter(s => s.tier === 2 && !s.finalized).length
-  const resolvedCount = segments.filter(s => s.finalized).length
 
   return (
     <VStack align="start" gap={4}>
@@ -336,49 +231,12 @@ function EmotionTab({ fileId }: { fileId: number }) {
         </HStack>
       )}
 
-      {/* Stats + Bulk actions */}
-      <HStack gap={4} flexWrap="wrap">
-        <HStack gap={2}>
-          <Badge colorPalette="green">{tier1Count} unanimous</Badge>
-          <Badge colorPalette="yellow">{tier2Count} high-conf</Badge>
-          <Badge colorPalette="blue">{resolvedCount}/{segments.length} resolved</Badge>
-        </HStack>
-        <HStack gap={2} ml="auto">
-          <Button
-            size="sm"
-            colorPalette="green"
-            variant="outline"
-            loading={batchSaving}
-            onClick={() => batchAccept(1)}
-            disabled={tier1Count === 0}
-          >
-            Accept all Tier 1 ({tier1Count})
-          </Button>
-          <Button
-            size="sm"
-            colorPalette="yellow"
-            variant="outline"
-            loading={batchSaving}
-            onClick={() => batchAccept(2)}
-            disabled={tier1Count + tier2Count === 0}
-          >
-            Accept Tier 1+2 ({tier1Count + tier2Count})
-          </Button>
-        </HStack>
-      </HStack>
-
-      {/* Filter tabs */}
+      {/* Summary badge */}
       <HStack gap={2}>
-        {(["all", "1", "2", "3", "unresolved"] as const).map(f => (
-          <Button
-            key={f}
-            size="xs"
-            variant={filter === f ? "solid" : "outline"}
-            onClick={() => setFilter(f)}
-          >
-            {f === "all" ? "All" : f === "unresolved" ? "Unresolved" : `Tier ${f}`}
-          </Button>
-        ))}
+        <Badge colorPalette="blue">{segments.length} segments</Badge>
+        <Badge colorPalette="gray">
+          {segments.filter(s => s.annotations.length > 0).length} annotated
+        </Badge>
       </HStack>
 
       {/* Table */}
@@ -386,21 +244,15 @@ function EmotionTab({ fileId }: { fileId: number }) {
         <Table.Root size="sm" variant="outline">
           <Table.Header>
             <Table.Row>
-              <Table.ColumnHeader w="100px">Time</Table.ColumnHeader>
-              <Table.ColumnHeader w="80px">Speaker</Table.ColumnHeader>
-              <Table.ColumnHeader>Annotations</Table.ColumnHeader>
-              <Table.ColumnHeader w="90px">Tier</Table.ColumnHeader>
-              <Table.ColumnHeader w="150px">Decision</Table.ColumnHeader>
-              <Table.ColumnHeader w="80px">Status</Table.ColumnHeader>
+              <Table.ColumnHeader w="110px">Time</Table.ColumnHeader>
+              <Table.ColumnHeader w="90px">Speaker</Table.ColumnHeader>
+              <Table.ColumnHeader>Per-Annotator Emotions</Table.ColumnHeader>
+              <Table.ColumnHeader w="180px">Aggregation</Table.ColumnHeader>
             </Table.Row>
           </Table.Header>
           <Table.Body>
-            {filtered.map(seg => (
-              <Table.Row
-                key={seg.segment_id}
-                bg={seg.finalized ? "transparent" : undefined}
-                opacity={seg.finalized ? 0.7 : 1}
-              >
+            {segments.map(seg => (
+              <Table.Row key={seg.segment_id}>
                 <Table.Cell>
                   <Text fontFamily="mono" fontSize="xs" color="fg.muted">
                     {fmtTime(seg.start_time)} – {fmtTime(seg.end_time)}
@@ -410,182 +262,52 @@ function EmotionTab({ fileId }: { fileId: number }) {
                   <Text fontSize="xs">{seg.speaker_label ?? "—"}</Text>
                 </Table.Cell>
                 <Table.Cell>
-                  <HStack gap={3} flexWrap="wrap">
+                  <VStack align="start" gap={1.5}>
                     {seg.annotations.length === 0 && (
                       <Text fontSize="xs" color="fg.muted">No annotations yet</Text>
                     )}
                     {seg.annotations.map(a => (
-                      <HStack key={a.annotator_id} gap={1}>
-                        <Text fontSize="xs" color="fg.muted">{a.username}:</Text>
-                        <Badge
-                          size="sm"
-                          colorPalette={
-                            a.emotion === seg.winning_label ? "blue" : "gray"
-                          }
-                        >
-                          {a.emotion === "Other" && a.emotion_other
-                            ? `Other(${a.emotion_other})`
-                            : a.emotion ?? "—"}
-                        </Badge>
-                        <Text fontSize="xs" color="fg.muted">
-                          ({(a.trust_score * 100).toFixed(0)}%)
-                        </Text>
+                      <HStack key={a.username} gap={1} flexWrap="wrap">
+                        <Text fontSize="xs" color="fg.muted" flexShrink={0}>{a.username}:</Text>
+                        {a.emotions.length === 0 ? (
+                          <Badge size="sm" colorPalette="gray">—</Badge>
+                        ) : (
+                          a.emotions.map((e, i) => (
+                            <Badge key={i} size="sm" colorPalette="blue">
+                              {emotionLabel(e)}
+                            </Badge>
+                          ))
+                        )}
                         {a.is_ambiguous && (
-                          <Badge size="sm" colorPalette="orange">⚠</Badge>
+                          <Badge size="sm" colorPalette="orange">⚠ ambiguous</Badge>
                         )}
                       </HStack>
                     ))}
-                  </HStack>
-                  {seg.annotations.length > 0 && (
-                    <Text fontSize="xs" color="fg.muted" mt={1}>
-                      Confidence: {(seg.confidence * 100).toFixed(0)}%
-                      {seg.winning_label && ` → ${seg.winning_label}`}
-                    </Text>
-                  )}
-                </Table.Cell>
-                <Table.Cell>{tierBadge(seg.tier)}</Table.Cell>
-                <Table.Cell>
-                  <VStack align="stretch" gap={1}>
-                    <Select.Root
-                      collection={emotionCollection}
-                      size="xs"
-                      value={decisions[seg.segment_id] ? [decisions[seg.segment_id]] : []}
-                      onValueChange={({ value }) =>
-                        setDecisions(d => ({ ...d, [seg.segment_id]: value[0] }))
-                      }
-                    >
-                      <Select.Trigger>
-                        <Select.ValueText placeholder="Select…" />
-                      </Select.Trigger>
-                      <Select.Positioner>
-                        <Select.Content>
-                          {emotionCollection.items.map(item => (
-                            <Select.Item key={item.value} item={item}>
-                              {item.label}
-                            </Select.Item>
-                          ))}
-                        </Select.Content>
-                      </Select.Positioner>
-                    </Select.Root>
-                    {decisions[seg.segment_id] === "Other" && (
-                      <Input
-                        size="xs"
-                        placeholder="Specify emotion…"
-                        value={decisionOthers[seg.segment_id] ?? ""}
-                        onChange={e =>
-                          setDecisionOthers(d => ({ ...d, [seg.segment_id]: e.target.value }))
-                        }
-                      />
-                    )}
                   </VStack>
                 </Table.Cell>
                 <Table.Cell>
-                  {seg.finalized && !overriding.has(seg.segment_id) ? (
-                    <VStack align="start" gap={1}>
-                      <HStack gap={1}>
-                        <CheckCircle size={14} color="green" />
-                        <Text fontSize="xs" color="green.400">
-                          {seg.final_emotion === "Other" && seg.final_emotion_other
-                            ? `Other(${seg.final_emotion_other})`
-                            : seg.final_emotion}
-                        </Text>
-                      </HStack>
-                      <Text fontSize="9px" color="fg.muted">{seg.final_method}</Text>
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        colorPalette="orange"
-                        onClick={() => setOverriding(prev => new Set(prev).add(seg.segment_id))}
-                        title="Override finalized emotion"
-                      >
-                        <Pencil size={10} />
-                        Override
-                      </Button>
-                    </VStack>
-                  ) : overriding.has(seg.segment_id) ? (
-                    <VStack align="stretch" gap={1}>
-                      <Select.Root
-                        collection={emotionCollection}
-                        size="xs"
-                        value={decisions[seg.segment_id] ? [decisions[seg.segment_id]] : []}
-                        onValueChange={({ value }) =>
-                          setDecisions(d => ({ ...d, [seg.segment_id]: value[0] }))
-                        }
-                      >
-                        <Select.Trigger>
-                          <Select.ValueText placeholder="Select…" />
-                        </Select.Trigger>
-                        <Select.Positioner>
-                          <Select.Content>
-                            {emotionCollection.items.map(item => (
-                              <Select.Item key={item.value} item={item}>{item.label}</Select.Item>
-                            ))}
-                          </Select.Content>
-                        </Select.Positioner>
-                      </Select.Root>
-                      {decisions[seg.segment_id] === "Other" && (
-                        <Input
-                          size="xs"
-                          placeholder="Specify emotion…"
-                          value={decisionOthers[seg.segment_id] ?? ""}
-                          onChange={e =>
-                            setDecisionOthers(d => ({ ...d, [seg.segment_id]: e.target.value }))
-                          }
-                        />
-                      )}
-                      <HStack gap={1}>
-                        <Button
-                          size="xs"
-                          colorPalette="orange"
-                          loading={saving[seg.segment_id]}
-                          disabled={
-                            !decisions[seg.segment_id] ||
-                            (decisions[seg.segment_id] === "Other" && !decisionOthers[seg.segment_id])
-                          }
-                          onClick={async () => {
-                            await saveDecision(seg.segment_id, "manual_override")
-                            setOverriding(prev => { const s = new Set(prev); s.delete(seg.segment_id); return s })
-                          }}
-                        >
-                          Save
-                        </Button>
-                        <IconButton
-                          aria-label="Cancel override"
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => setOverriding(prev => { const s = new Set(prev); s.delete(seg.segment_id); return s })}
-                        >
-                          <X size={12} />
-                        </IconButton>
-                      </HStack>
-                    </VStack>
-                  ) : (
-                    <Button
-                      size="xs"
-                      colorPalette="blue"
-                      disabled={
-                        !decisions[seg.segment_id] ||
-                        (decisions[seg.segment_id] === "Other" && !decisionOthers[seg.segment_id])
-                      }
-                      loading={saving[seg.segment_id]}
-                      onClick={() => saveDecision(
-                        seg.segment_id,
-                        seg.tier === 1 ? "unanimous"
-                          : seg.tier === 2 ? "weighted"
-                          : "manual"
-                      )}
-                    >
-                      Save
-                    </Button>
-                  )}
+                  <VStack align="start" gap={0.5}>
+                    {Object.entries(seg.emotion_counts)
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([label, count]) => (
+                        <HStack key={label} gap={1}>
+                          <Badge size="xs" colorPalette="gray">
+                            {emotionLabel(label)}: {count}
+                          </Badge>
+                        </HStack>
+                      ))}
+                    {Object.keys(seg.emotion_counts).length === 0 && (
+                      <Text fontSize="xs" color="fg.muted">—</Text>
+                    )}
+                  </VStack>
                 </Table.Cell>
               </Table.Row>
             ))}
           </Table.Body>
         </Table.Root>
-        {filtered.length === 0 && (
+        {segments.length === 0 && (
           <Box textAlign="center" py={8} color="fg.muted">
-            <Text>No segments match the current filter.</Text>
+            <Text>No segments found.</Text>
           </Box>
         )}
       </Box>
@@ -791,9 +513,6 @@ export default function ReviewFinalizePage() {
         ) : (
           <VStack align="stretch" gap={1}>
             {files.filter(f => !fileSearch || f.filename.toLowerCase().includes(fileSearch.toLowerCase())).map(f => {
-              const pct = f.total_segments
-                ? Math.round((f.finalized_emotions / f.total_segments) * 100)
-                : 0
               const needsMoreAnnotators = f.emotion_annotators > 0 && f.emotion_annotators < 2
               return (
                 <Box
@@ -832,9 +551,6 @@ export default function ReviewFinalizePage() {
                     >
                       {needsMoreAnnotators && <AlertTriangle size={9} />}
                       {f.emotion_annotators} annotator{f.emotion_annotators !== 1 ? "s" : ""}
-                    </Badge>
-                    <Badge size="sm" colorPalette={pct === 100 ? "green" : "gray"}>
-                      {pct}% done
                     </Badge>
                   </HStack>
                   <HStack mt={1} gap={1}>

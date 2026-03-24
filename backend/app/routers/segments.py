@@ -34,7 +34,7 @@ def _spk_dict(s: SpeakerSegment) -> dict:
     return {
         "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
         "speaker_label": s.speaker_label, "gender": s.gender,
-        "emotion": s.emotion, "emotion_other": s.emotion_other,
+        "emotion": s.emotion,
         "is_ambiguous": s.is_ambiguous, "notes": s.notes,
         "source": s.source, "updated_at": s.updated_at.isoformat(),
     }
@@ -100,7 +100,7 @@ async def update_speaker_segment(
     # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
     has_label_changes = any(
         getattr(body, f) is not None
-        for f in ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]
+        for f in ["speaker_label", "gender", "emotion", "notes", "is_ambiguous"]
     )
     if has_label_changes:
         client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
@@ -109,7 +109,7 @@ async def update_speaker_segment(
             raise STALE_ERROR
 
     # Standard fields
-    for field in ["speaker_label", "gender", "emotion", "emotion_other", "notes", "is_ambiguous"]:
+    for field in ["speaker_label", "gender", "emotion", "notes", "is_ambiguous"]:
         new_val = getattr(body, field, None)
         if new_val is not None:
             old_val = getattr(segment, field)
@@ -527,7 +527,7 @@ async def get_annotate_data(
             spk_times = {(s.start_time, s.end_time) for s in speaker_segs}
             emo_times = {(s.start_time, s.end_time) for s in emotion_segs}
             stale = spk_times != emo_times
-            untouched = all(s.emotion is None for s in emotion_segs)
+            untouched = all(not s.emotion for s in emotion_segs)
             if stale and untouched:
                 for seg in emotion_segs:
                     await db.delete(seg)
@@ -546,7 +546,6 @@ async def get_annotate_data(
                     end_time=seg.end_time,
                     gender=seg.gender,
                     emotion=None,
-                    emotion_other=None,
                     source="annotator",
                 ))
             await db.flush()
@@ -572,22 +571,22 @@ async def get_annotate_data(
     )).scalars().all()
 
     def _spk_baseline(s: SpeakerSegment) -> dict:
-        """Shared speaker segments — emotion fields stripped to prevent annotation bias."""
+        """Shared speaker segments — emotion stripped to prevent annotation bias."""
         return {
             "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
             "speaker_label": s.speaker_label, "gender": s.gender,
-            "emotion": None, "emotion_other": None,
+            "emotion": None,
             "is_ambiguous": s.is_ambiguous, "notes": s.notes,
             "source": s.source,
             "updated_at": s.updated_at.isoformat(),
         }
 
     def _spk_emotion(s: SpeakerSegment) -> dict:
-        """Annotator-owned emotion copies — emotion fields preserved."""
+        """Annotator-owned emotion copies — emotion list preserved."""
         return {
             "id": s.id, "start_time": s.start_time, "end_time": s.end_time,
             "speaker_label": s.speaker_label, "gender": s.gender,
-            "emotion": s.emotion, "emotion_other": s.emotion_other,
+            "emotion": s.emotion,
             "is_ambiguous": s.is_ambiguous, "notes": s.notes,
             "source": s.source,
             "updated_at": s.updated_at.isoformat(),
