@@ -1874,6 +1874,7 @@ function AnnotateInner() {
             const isLocked =
               (a.task_type === "speaker" || a.task_type === "gender") ? data.audio_file.locked_speaker
               : a.task_type === "transcription" ? data.audio_file.locked_transcription
+              : a.task_type === "emotion" ? data.audio_file.locked_emotion
               : false
             return (
               <HStack key={a.id} gap={1}>
@@ -1883,13 +1884,12 @@ function AnnotateInner() {
                 >
                   {a.task_type}
                 </Badge>
-                {isLocked && (
-                  <HStack gap={0.5} title="All annotators have submitted — this task is locked">
+                {isLocked ? (
+                  <HStack gap={0.5} title="This task is locked — no further changes allowed">
                     <Lock size={11} color="var(--chakra-colors-orange-400)" />
                     <Text fontSize="10px" color="orange.400">locked</Text>
                   </HStack>
-                )}
-                {a.status === "completed" ? (
+                ) : a.status === "completed" ? (
                   <Button size="xs" colorPalette="gray" variant="ghost" loading={completing[a.id]}
                     title="Undo — reopen this task" onClick={() => undoComplete(a)}>
                     ↩ Undo
