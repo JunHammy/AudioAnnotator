@@ -55,6 +55,7 @@ class AudioFile(Base):
     collaborative_locked_speaker = Column(Boolean, nullable=False, default=False)
     collaborative_locked_gender = Column(Boolean, nullable=False, default=False)
     collaborative_locked_transcription = Column(Boolean, nullable=False, default=False)
+    collaborative_locked_emotion = Column(Boolean, nullable=False, default=False, server_default="0")
     locked_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     locked_at = Column(DateTime(timezone=True), nullable=True)
     annotator_remarks = Column(Text, nullable=True)

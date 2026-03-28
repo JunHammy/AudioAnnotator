@@ -616,11 +616,12 @@ async def toggle_task_lock(
         af.locked_by = admin.id
         af.locked_at = datetime.now(timezone.utc)
     else:
-        # Unlock: clear lock metadata only if all three tasks are now unlocked
+        # Unlock: clear lock metadata only if all four tasks are now unlocked
         if not any([
             af.collaborative_locked_speaker,
             af.collaborative_locked_gender,
             af.collaborative_locked_transcription,
+            af.collaborative_locked_emotion,
         ]):
             af.locked_by = None
             af.locked_at = None
@@ -633,6 +634,7 @@ async def toggle_task_lock(
         "data": {
             "locked_speaker": af.collaborative_locked_speaker,
             "locked_transcription": af.collaborative_locked_transcription,
+            "locked_emotion": af.collaborative_locked_emotion,
         },
     })
 

@@ -187,8 +187,8 @@ async def update_assignment_status(
                               {"audio_file_id": assignment.audio_file_id,
                                "task_type": assignment.task_type})
 
-        # Auto-lock collaborative tasks when ALL annotators for that type complete
-        if assignment.task_type in ("speaker", "gender", "transcription"):
+        # Auto-lock collaborative/emotion tasks when ALL annotators for that type complete
+        if assignment.task_type in ("speaker", "gender", "transcription", "emotion"):
             same_type = (await db.execute(
                 select(Assignment)
                 .where(Assignment.audio_file_id == assignment.audio_file_id)

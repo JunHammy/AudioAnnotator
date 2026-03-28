@@ -42,6 +42,7 @@ interface ReviewFile {
   collaborative_locked_speaker: boolean
   collaborative_locked_gender: boolean
   collaborative_locked_transcription: boolean
+  collaborative_locked_emotion: boolean
   annotator_remarks: string | null
   admin_response: string | null
 }
@@ -184,10 +185,35 @@ function iaaColor(score: number | null): string {
   return "red"
 }
 
-function EmotionTab({ fileId }: { fileId: number }) {
+function EmotionTab({
+  fileId,
+  locked,
+  onLockToggle,
+}: {
+  fileId: number
+  locked: boolean
+  onLockToggle: () => void
+}) {
   const [segments, setSegments] = useState<EmotionSegmentReview[]>([])
   const [loading, setLoading] = useState(true)
   const [iaa, setIaa] = useState<IAAMetrics | null>(null)
+  const [toggling, setToggling] = useState(false)
+
+  const toggleLock = async () => {
+    setToggling(true)
+    try {
+      await api.patch(`/api/audio-files/${fileId}/lock`, {
+        task_type: "emotion",
+        locked: !locked,
+      })
+      onLockToggle()
+      ToastWizard.standard("success", locked ? "Emotion unlocked" : "Emotion locked")
+    } catch {
+      ToastWizard.standard("error", "Lock toggle failed")
+    } finally {
+      setToggling(false)
+    }
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -208,6 +234,31 @@ function EmotionTab({ fileId }: { fileId: number }) {
 
   return (
     <VStack align="start" gap={4}>
+      {/* Lock toggle */}
+      <HStack justify="space-between" w="full">
+        <HStack gap={2}>
+          {locked ? (
+            <Badge colorPalette="orange">
+              <Lock size={12} /> Locked
+            </Badge>
+          ) : (
+            <Badge colorPalette="gray">
+              <Unlock size={12} /> Open for annotation
+            </Badge>
+          )}
+        </HStack>
+        <Button
+          size="sm"
+          colorPalette={locked ? "gray" : "orange"}
+          variant="outline"
+          loading={toggling}
+          onClick={toggleLock}
+        >
+          {locked ? <Unlock size={14} /> : <Lock size={14} />}
+          {locked ? "Unlock" : "Lock"}
+        </Button>
+      </HStack>
+
       {/* IAA metrics bar */}
       {iaa && (
         <HStack gap={3} px={3} py={2} bg="bg.muted" rounded="md" borderWidth="1px" borderColor="border" flexWrap="wrap">
@@ -460,7 +511,7 @@ export default function ReviewFinalizePage() {
     }
   }
 
-  const handleLockToggle = async (taskType: "speaker" | "gender" | "transcription") => {
+  const handleLockToggle = async (taskType: "speaker" | "gender" | "transcription" | "emotion") => {
     await loadFiles()
     if (selectedFile) {
       const updated = (await api.get("/api/review/files")).data.find(
@@ -567,6 +618,11 @@ export default function ReviewFinalizePage() {
                     {f.collaborative_locked_transcription && (
                       <Badge size="sm" colorPalette="orange" variant="subtle">
                         <Lock size={10} /> tr
+                      </Badge>
+                    )}
+                    {f.collaborative_locked_emotion && (
+                      <Badge size="sm" colorPalette="orange" variant="subtle">
+                        <Lock size={10} /> emo
                       </Badge>
                     )}
                   </HStack>
@@ -692,7 +748,11 @@ export default function ReviewFinalizePage() {
 
               <Box mt={4}>
                 <Tabs.Content value="emotion">
-                  <EmotionTab fileId={selectedFile.id} />
+                  <EmotionTab
+                    fileId={selectedFile.id}
+                    locked={selectedFile.collaborative_locked_emotion}
+                    onLockToggle={() => handleLockToggle("emotion")}
+                  />
                 </Tabs.Content>
                 <Tabs.Content value="speaker">
                   <CollabTab

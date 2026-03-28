@@ -10,7 +10,7 @@ _USERNAME_RE = re.compile(r"^[a-zA-Z0-9_]{3,50}$")
 _MIN_PW_LEN  = 8
 _VALID_TASK_TYPES = {"emotion", "gender", "speaker", "transcription"}
 _VALID_STATUSES   = {"pending", "in_progress", "completed"}
-_VALID_LOCK_TYPES = {"speaker", "gender", "transcription"}
+_VALID_LOCK_TYPES = {"speaker", "gender", "transcription", "emotion"}
 _VALID_EMOTIONS   = {"Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust", "Other"}
 _VALID_GENDERS    = {"Male", "Female", "Mixed", "unk"}
 
@@ -173,6 +173,7 @@ class AudioFileResponse(BaseModel):
     collaborative_locked_speaker: bool
     collaborative_locked_gender: bool
     collaborative_locked_transcription: bool
+    collaborative_locked_emotion: bool = False
     locked_by: Optional[int]
     locked_at: Optional[datetime]
     annotator_remarks: Optional[str]

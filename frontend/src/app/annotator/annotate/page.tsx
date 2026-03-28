@@ -59,6 +59,7 @@ interface AnnotateData {
     admin_response: string | null
     locked_speaker: boolean
     locked_transcription: boolean
+    locked_emotion: boolean
   }
   speaker_segments: Segment[]
   emotion_segments: Segment[]
@@ -394,7 +395,10 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
       let res
       if (type === "emotion") {
         res = await api.patch(`/api/segments/speaker/${segment.id}`, {
-          emotion: emotions.length > 0 ? emotions : null,
+          emotion: (() => {
+            const cleaned = emotions.filter(e => e !== "Other:" && !(e.startsWith("Other:") && e.slice(6).trim() === ""))
+            return cleaned.length > 0 ? cleaned : null
+          })(),
           is_ambiguous: isAmbiguous,
           notes: notes || null,
           updated_at: segment.updated_at,
@@ -523,22 +527,35 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
             <Field.Root>
               <Field.Label fontSize="xs">Emotion <Text as="span" color="fg.subtle" fontSize="9px">(keys 1–7 toggle, 8 adds Other)</Text></Field.Label>
               <VStack align="stretch" gap={1.5} mt={1}>
-                {["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust"].map((em, i) => (
-                  <Checkbox.Root
-                    key={em}
-                    size="sm"
-                    checked={emotions.includes(em)}
-                    onCheckedChange={({ checked }) =>
-                      setEmotions(prev => checked ? [...prev, em] : prev.filter(x => x !== em))
-                    }
-                  >
-                    <Checkbox.HiddenInput />
-                    <Checkbox.Control />
-                    <Checkbox.Label fontSize="xs">
-                      {em} <Text as="span" color="fg.subtle" fontSize="9px">({i + 1})</Text>
-                    </Checkbox.Label>
-                  </Checkbox.Root>
-                ))}
+                {["Neutral", "Happy", "Sad", "Angry", "Surprised", "Fear", "Disgust"].map((em, i) => {
+                  const isChecked = emotions.includes(em)
+                  return (
+                    <HStack
+                      key={em}
+                      gap={2}
+                      cursor="pointer"
+                      px={1}
+                      py={0.5}
+                      rounded="sm"
+                      _hover={{ bg: "bg.muted" }}
+                      onClick={() => setEmotions(prev => prev.includes(em) ? prev.filter(x => x !== em) : [...prev, em])}
+                    >
+                      <Box
+                        w="14px" h="14px" flexShrink={0}
+                        borderWidth="1px"
+                        borderColor={isChecked ? "blue.400" : "border"}
+                        bg={isChecked ? "blue.500" : "transparent"}
+                        rounded="sm"
+                        display="flex" alignItems="center" justifyContent="center"
+                      >
+                        {isChecked && <Text color="white" fontSize="9px" lineHeight={1}>✓</Text>}
+                      </Box>
+                      <Text fontSize="xs" userSelect="none">
+                        {em} <Text as="span" color="fg.subtle" fontSize="9px">({i + 1})</Text>
+                      </Text>
+                    </HStack>
+                  )
+                })}
 
                 {/* Other entries */}
                 {emotions.filter(e => e.startsWith("Other:")).map((entry, idx) => {
@@ -1116,6 +1133,7 @@ function AnnotateInner() {
             ...prev.audio_file,
             locked_speaker: d.locked_speaker as boolean,
             locked_transcription: d.locked_transcription as boolean,
+            locked_emotion: d.locked_emotion as boolean,
           },
         } : prev)
       }
@@ -2184,6 +2202,7 @@ function AnnotateInner() {
             locked={
               selection.type === "speaker" ? data.audio_file.locked_speaker
               : selection.type === "transcription" ? data.audio_file.locked_transcription
+              : selection.type === "emotion" ? data.audio_file.locked_emotion
               : false
             }
           />

@@ -66,6 +66,15 @@ async def _check_transcription_lock(db: AsyncSession, audio_file_id: int, user: 
         raise LOCKED_ERROR
 
 
+async def _check_emotion_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
+    """Raise 423 if the emotion track is locked and user is not admin."""
+    if user.role == "admin":
+        return
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == audio_file_id))).scalar_one_or_none()
+    if af and af.collaborative_locked_emotion:
+        raise LOCKED_ERROR
+
+
 # ─── Speaker Segments ────────────────────────────────────────────────────────
 
 @router.get("/speaker/{audio_file_id}", response_model=list[SpeakerSegmentResponse])
@@ -94,7 +103,10 @@ async def update_speaker_segment(
     if not segment:
         raise HTTPException(status_code=404, detail="Segment not found")
 
-    await _check_speaker_lock(db, segment.audio_file_id, current_user)
+    if segment.source == "annotator":
+        await _check_emotion_lock(db, segment.audio_file_id, current_user)
+    else:
+        await _check_speaker_lock(db, segment.audio_file_id, current_user)
 
     # Optimistic locking — only enforced for label/metadata changes, not time-only (drag) changes.
     # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
@@ -609,6 +621,7 @@ async def get_annotate_data(
             "admin_response": af.admin_response,
             "locked_speaker": af.collaborative_locked_speaker,
             "locked_transcription": af.collaborative_locked_transcription,
+            "locked_emotion": af.collaborative_locked_emotion,
         },
         "speaker_segments": [_spk_baseline(s) for s in speaker_segs],
         "emotion_segments": [_spk_emotion(s) for s in emotion_segs],
