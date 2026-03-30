@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 
 from app.auth.dependencies import get_current_user, require_admin
 from app.database import get_db
@@ -187,21 +187,27 @@ async def update_assignment_status(
                               {"audio_file_id": assignment.audio_file_id,
                                "task_type": assignment.task_type})
 
-        # Auto-lock collaborative/emotion tasks when ALL annotators for that type complete
+        # Auto-lock when ALL annotators for that task type complete.
+        # Uses COUNT of still-pending assignments (atomic read) + conditional
+        # UPDATE (only sets lock if not already set) to avoid a race condition
+        # where two simultaneous completions both read stale state.
         if assignment.task_type in ("speaker", "gender", "transcription", "emotion"):
-            same_type = (await db.execute(
-                select(Assignment)
+            lock_col = f"collaborative_locked_{assignment.task_type}"
+            pending = (await db.execute(
+                select(func.count(Assignment.id))
                 .where(Assignment.audio_file_id == assignment.audio_file_id)
                 .where(Assignment.task_type == assignment.task_type)
-            )).scalars().all()
+                .where(Assignment.status != "completed")
+            )).scalar_one()
 
-            if all(a.status == "completed" for a in same_type):
-                af = (await db.execute(
-                    select(AudioFile).where(AudioFile.id == assignment.audio_file_id)
-                )).scalar_one_or_none()
-                if af:
-                    setattr(af, f"collaborative_locked_{assignment.task_type}", True)
-                    await db.flush()
+            if pending == 0:
+                await db.execute(
+                    update(AudioFile)
+                    .where(AudioFile.id == assignment.audio_file_id)
+                    .where(getattr(AudioFile, lock_col) == False)  # noqa: E712
+                    .values(**{lock_col: True})
+                    .execution_options(synchronize_session=False)
+                )
 
 
     await db.flush()
