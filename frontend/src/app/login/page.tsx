@@ -10,7 +10,10 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const { user, isLoading, login } = useAuth();
+
+  useEffect(() => { setMounted(true); }, []);
   const router = useRouter();
 
   // Tracks whether *this component* triggered the login — if so, skip the
@@ -31,7 +34,7 @@ export default function LoginPage() {
       const me = await login(username, password);
       justLoggedIn.current = true; // suppress the useEffect redirect/toast
       ToastWizard.standard("success", "Welcome back!", `Logged in as ${me.username}.`, 3000, true);
-      router.replace(me.role === "admin" ? "/admin" : "/annotator");
+      window.location.href = me.role === "admin" ? "/admin" : "/annotator";
     } catch {
       ToastWizard.standard("error", "Login failed", "Invalid username or password.", 5000, true);
     } finally {
@@ -39,13 +42,7 @@ export default function LoginPage() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <Center minH="100vh" bg="bg">
-        <Spinner size="xl" colorPalette="blue" />
-      </Center>
-    );
-  }
+  if (!mounted || isLoading) return null;
 
   return (
     <Center minH="100vh" bg="bg">

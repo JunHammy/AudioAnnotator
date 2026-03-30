@@ -495,7 +495,7 @@ async def update_remarks(
                 Assignment.audio_file_id == file_id,
                 Assignment.annotator_id == current_user.id,
             )
-        )).scalar_one_or_none()
+        )).scalars().first()
         if not assigned:
             raise HTTPException(status_code=403, detail="Not assigned to this file")
 

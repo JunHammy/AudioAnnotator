@@ -61,6 +61,7 @@ async def list_review_files(
             "collaborative_locked_speaker": af.collaborative_locked_speaker,
             "collaborative_locked_gender": af.collaborative_locked_gender,
             "collaborative_locked_transcription": af.collaborative_locked_transcription,
+            "collaborative_locked_emotion": af.collaborative_locked_emotion,
             "annotator_remarks": af.annotator_remarks,
         })
     return out

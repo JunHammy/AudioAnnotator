@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { Suspense, useCallback, useEffect, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   Badge,
   Box,
@@ -169,22 +170,6 @@ function CollabSegmentRow({ seg, taskType }: { seg: CollabSegment; taskType: str
 
 // ─── Emotion Tab ─────────────────────────────────────────────────────────────
 
-interface IAAMetrics {
-  annotator_count: number
-  segment_count: number
-  annotated_count: number
-  percent_agreement: number | null
-  fleiss_kappa: number | null
-}
-
-function iaaColor(score: number | null): string {
-  if (score === null) return "gray"
-  if (score >= 0.8) return "green"
-  if (score >= 0.6) return "yellow"
-  if (score >= 0.4) return "orange"
-  return "red"
-}
-
 function EmotionTab({
   fileId,
   locked,
@@ -196,7 +181,6 @@ function EmotionTab({
 }) {
   const [segments, setSegments] = useState<EmotionSegmentReview[]>([])
   const [loading, setLoading] = useState(true)
-  const [iaa, setIaa] = useState<IAAMetrics | null>(null)
   const [toggling, setToggling] = useState(false)
 
   const toggleLock = async () => {
@@ -217,7 +201,6 @@ function EmotionTab({
 
   const load = useCallback(async () => {
     setLoading(true)
-    api.get(`/api/review/${fileId}/iaa`).then(r => setIaa(r.data)).catch(() => {})
     try {
       const res = await api.get(`/api/review/${fileId}/emotion`)
       setSegments(res.data)
@@ -259,35 +242,10 @@ function EmotionTab({
         </Button>
       </HStack>
 
-      {/* IAA metrics bar */}
-      {iaa && (
-        <HStack gap={3} px={3} py={2} bg="bg.muted" rounded="md" borderWidth="1px" borderColor="border" flexWrap="wrap">
-          <Text fontSize="xs" fontWeight="semibold" color="fg.muted">IAA</Text>
-          <Badge colorPalette="gray" size="sm">{iaa.annotator_count} annotators</Badge>
-          <Badge colorPalette="gray" size="sm">{iaa.annotated_count}/{iaa.segment_count} segs with ≥2 votes</Badge>
-          {iaa.percent_agreement !== null ? (
-            <Badge colorPalette={iaaColor(iaa.percent_agreement)} size="sm">
-              Agreement: {(iaa.percent_agreement * 100).toFixed(1)}%
-            </Badge>
-          ) : (
-            <Badge colorPalette="gray" size="sm">Agreement: —</Badge>
-          )}
-          {iaa.fleiss_kappa !== null ? (
-            <Badge colorPalette={iaaColor(iaa.fleiss_kappa)} size="sm">
-              κ = {iaa.fleiss_kappa.toFixed(3)}
-            </Badge>
-          ) : (
-            <Badge colorPalette="gray" size="sm" title="κ requires equal annotator count per segment">κ = —</Badge>
-          )}
-        </HStack>
-      )}
-
-      {/* Summary badge */}
+      {/* Summary */}
       <HStack gap={2}>
         <Badge colorPalette="blue">{segments.length} segments</Badge>
-        <Badge colorPalette="gray">
-          {segments.filter(s => s.annotations.length > 0).length} annotated
-        </Badge>
+        <Badge colorPalette="gray">{segments.filter(s => s.annotations.length > 0).length} annotated</Badge>
       </HStack>
 
       {/* Table */}
@@ -467,7 +425,7 @@ function CollabTab({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function ReviewFinalizePage() {
+function ReviewFinalizeInner() {
   const [files, setFiles] = useState<ReviewFile[]>([])
   const [loadingFiles, setLoadingFiles] = useState(true)
   const [selectedFile, setSelectedFile] = useState<ReviewFile | null>(null)
@@ -511,15 +469,48 @@ export default function ReviewFinalizePage() {
     }
   }
 
-  const handleLockToggle = async (taskType: "speaker" | "gender" | "transcription" | "emotion") => {
-    await loadFiles()
-    if (selectedFile) {
-      const updated = (await api.get("/api/review/files")).data.find(
-        (f: ReviewFile) => f.id === selectedFile.id
-      )
-      if (updated) setSelectedFile(updated)
+  const handleLockToggle = async () => {
+    try {
+      const res = await api.get("/api/review/files")
+      setFiles(res.data)
+      if (selectedFile) {
+        const updated = (res.data as ReviewFile[]).find(f => f.id === selectedFile.id)
+        if (updated) setSelectedFile(updated)
+      }
+    } catch {
+      ToastWizard.standard("error", "Failed to reload file state")
     }
   }
+
+  const [lockingAll, setLockingAll] = useState(false)
+  const lockAll = async (lock: boolean) => {
+    if (!selectedFile) return
+    setLockingAll(true)
+    try {
+      await Promise.all(
+        (["speaker", "gender", "transcription", "emotion"] as const).map(t =>
+          api.patch(`/api/audio-files/${selectedFile.id}/lock`, { task_type: t, locked: lock })
+        )
+      )
+      await handleLockToggle()
+      ToastWizard.standard("success", lock ? "All tasks locked" : "All tasks unlocked")
+    } catch {
+      ToastWizard.standard("error", "Failed to update locks")
+    } finally {
+      setLockingAll(false)
+    }
+  }
+
+  // Pre-select file from ?file= query param
+  const searchParams = useSearchParams()
+  const autoSelectDone = useRef(false)
+  useEffect(() => {
+    if (autoSelectDone.current || files.length === 0) return
+    const fileId = searchParams.get("file")
+    if (!fileId) return
+    const match = files.find(f => f.id === Number(fileId))
+    if (match) { setSelectedFile(match); autoSelectDone.current = true }
+  }, [files, searchParams])
 
   return (
     <Box h="100%" display="flex">
@@ -661,7 +652,29 @@ export default function ReviewFinalizePage() {
                   </Text>
                 </HStack>
               </Box>
-              {/* Export buttons */}
+              {/* Lock All / Unlock All + Export buttons */}
+              <HStack gap={2} flexShrink={0}>
+                {(() => {
+                  const allLocked =
+                    selectedFile.collaborative_locked_speaker &&
+                    selectedFile.collaborative_locked_gender &&
+                    selectedFile.collaborative_locked_transcription &&
+                    selectedFile.collaborative_locked_emotion
+                  return (
+                    <Button
+                      size="sm"
+                      colorPalette={allLocked ? "gray" : "orange"}
+                      variant={allLocked ? "outline" : "solid"}
+                      loading={lockingAll}
+                      onClick={() => lockAll(!allLocked)}
+                      title={allLocked ? "Unlock all tasks for this file" : "Lock all tasks for this file"}
+                    >
+                      {allLocked ? <Unlock size={14} /> : <Lock size={14} />}
+                      {allLocked ? "Unlock All" : "Lock All"}
+                    </Button>
+                  )
+                })()}
+              </HStack>
               <HStack gap={2} flexShrink={0}>
                 <Button
                   size="sm" variant="outline" colorPalette="green"
@@ -751,7 +764,7 @@ export default function ReviewFinalizePage() {
                   <EmotionTab
                     fileId={selectedFile.id}
                     locked={selectedFile.collaborative_locked_emotion}
-                    onLockToggle={() => handleLockToggle("emotion")}
+                    onLockToggle={handleLockToggle}
                   />
                 </Tabs.Content>
                 <Tabs.Content value="speaker">
@@ -759,7 +772,7 @@ export default function ReviewFinalizePage() {
                     fileId={selectedFile.id}
                     taskType="speaker"
                     locked={selectedFile.collaborative_locked_speaker}
-                    onLockToggle={() => handleLockToggle("speaker")}
+                    onLockToggle={handleLockToggle}
                   />
                 </Tabs.Content>
                 <Tabs.Content value="gender">
@@ -767,7 +780,7 @@ export default function ReviewFinalizePage() {
                     fileId={selectedFile.id}
                     taskType="gender"
                     locked={selectedFile.collaborative_locked_gender}
-                    onLockToggle={() => handleLockToggle("gender")}
+                    onLockToggle={handleLockToggle}
                   />
                 </Tabs.Content>
                 <Tabs.Content value="transcription">
@@ -775,7 +788,7 @@ export default function ReviewFinalizePage() {
                     fileId={selectedFile.id}
                     taskType="transcription"
                     locked={selectedFile.collaborative_locked_transcription}
-                    onLockToggle={() => handleLockToggle("transcription")}
+                    onLockToggle={handleLockToggle}
                   />
                 </Tabs.Content>
               </Box>
@@ -784,5 +797,13 @@ export default function ReviewFinalizePage() {
         )}
       </Box>
     </Box>
+  )
+}
+
+export default function ReviewFinalizePage() {
+  return (
+    <Suspense>
+      <ReviewFinalizeInner />
+    </Suspense>
   )
 }

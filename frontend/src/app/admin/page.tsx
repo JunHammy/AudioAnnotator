@@ -46,7 +46,6 @@ interface DashboardData {
   annotator_summary: {
     id: number;
     username: string;
-    trust_score: number;
     is_active: boolean;
     assigned: number;
     completed: number;
@@ -291,7 +290,7 @@ export default function AdminDashboard() {
         <Table.Root size="sm">
           <Table.Header>
             <Table.Row>
-              {["Annotator", "Assigned", "Completed", "Trust Score", "Status"].map((h) => (
+              {["Annotator", "Assigned", "Completed", "Status"].map((h) => (
                 <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
               ))}
             </Table.Row>
@@ -307,9 +306,6 @@ export default function AdminDashboard() {
                 </Table.Cell>
                 <Table.Cell px={4} py={3}>
                   <Text fontSize="sm" color="green.400">{a.completed}</Text>
-                </Table.Cell>
-                <Table.Cell px={4} py={3}>
-                  <Text fontSize="sm" color="blue.400">{a.trust_score.toFixed(2)}</Text>
                 </Table.Cell>
                 <Table.Cell px={4} py={3}>
                   <Badge colorPalette={a.is_active ? "green" : "red"} size="sm">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Badge,
   Box,
@@ -19,7 +20,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Calendar, Lock, Pause, Play, Plus, RotateCcw, Trash2, Unlock, Users, Zap } from "lucide-react";
+import { AlertTriangle, Archive, Calendar, ClipboardCheck, Pause, Play, Plus, RotateCcw, Trash2, Users, Zap } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -106,13 +107,13 @@ function groupByAnnotator(assignments: Assignment[]): Map<number, Record<TaskTyp
 // ── Page ──────────────────────────────────────────────────────────────────
 
 export default function AssignTasksPage() {
+  const router = useRouter();
   const [audioFiles,   setAudioFiles]   = useState<AudioFile[]>([]);
   const [users,        setUsers]        = useState<User[]>([]);
   const [selectedFile, setSelectedFile] = useState<AudioFile | null>(null);
   const [assignments,  setAssignments]  = useState<Assignment[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [saving,       setSaving]       = useState(false);
-  const [locking,      setLocking]      = useState<Record<string, boolean>>({});
   const [reopening,    setReopening]    = useState<Set<number>>(new Set());
   const [assigningEmotionAll, setAssigningEmotionAll] = useState(false);
 
@@ -413,41 +414,12 @@ export default function AssignTasksPage() {
     }
   }
 
-  async function toggleLock(taskType: "speaker" | "gender" | "transcription", currentLocked: boolean) {
-    if (!selectedFile) return;
-    const key = `${selectedFile.id}_${taskType}`;
-    setLocking(l => ({ ...l, [key]: true }));
-    try {
-      const res = await api.patch(`/api/audio-files/${selectedFile.id}/lock`, {
-        task_type: taskType,
-        locked: !currentLocked,
-      });
-      const updated: AudioFile = { ...selectedFile, ...res.data };
-      setSelectedFile(updated);
-      setAudioFiles(prev => prev.map(f => f.id === updated.id ? updated : f));
-      ToastWizard.standard(
-        "success",
-        `${taskType} ${!currentLocked ? "locked" : "unlocked"}`,
-        undefined, 2000, true,
-      );
-    } catch {
-      ToastWizard.standard("error", "Lock toggle failed");
-    } finally {
-      setLocking(l => ({ ...l, [key]: false }));
-    }
-  }
-
   // Coverage summary per task type
   const emotionAnnotators = assignments
     .filter((a) => a.task_type === "emotion")
     .map((a) => users.find((u) => u.id === a.annotator_id)?.username)
     .filter(Boolean);
 
-  const COLLAB_TASKS = [
-    { key: "speaker",       label: "Spk", field: "collaborative_locked_speaker" as const },
-    { key: "gender",        label: "Gnd", field: "collaborative_locked_gender" as const },
-    { key: "transcription", label: "Trn", field: "collaborative_locked_transcription" as const },
-  ] as const;
 
   return (
     <Box p={8} h="full">
@@ -595,28 +567,16 @@ export default function AssignTasksPage() {
                   <Badge colorPalette="blue" size="sm">{selectedFile.language ?? "—"}</Badge>
                   <Text fontSize="xs" color="fg.muted">{selectedFile.duration?.toFixed(1)}s</Text>
                   <Text fontSize="xs" color="fg.muted">{selectedFile.num_speakers} speakers</Text>
-                  {/* Quick lock buttons */}
-                  <HStack ml="auto" gap={1}>
-                    {COLLAB_TASKS.map(({ key, label, field }) => {
-                      const isLocked = selectedFile[field];
-                      const lockKey = `${selectedFile.id}_${key}`;
-                      return (
-                        <IconButton
-                          key={key}
-                          aria-label={`${isLocked ? "Unlock" : "Lock"} ${key}`}
-                          size="xs"
-                          variant={isLocked ? "solid" : "outline"}
-                          colorPalette={isLocked ? "orange" : "gray"}
-                          loading={locking[lockKey]}
-                          onClick={() => toggleLock(key, isLocked)}
-                          title={`${isLocked ? "Unlock" : "Lock"} ${key} task`}
-                        >
-                          {isLocked ? <Lock size={11} /> : <Unlock size={11} />}
-                          <Text fontSize="9px" ml="1px">{label}</Text>
-                        </IconButton>
-                      );
-                    })}
-                  </HStack>
+                  <Button
+                    ml="auto"
+                    size="xs"
+                    variant="outline"
+                    colorPalette="blue"
+                    onClick={() => router.push(`/admin/review?file=${selectedFile.id}`)}
+                    title="Open in Review & Finalize to lock/unlock tasks"
+                  >
+                    <ClipboardCheck size={12} /> Review & Finalize
+                  </Button>
                 </Flex>
               </Box>
 

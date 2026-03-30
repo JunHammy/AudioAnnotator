@@ -147,7 +147,6 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
         "duration": af.duration,
         "num_speakers": af.num_speakers,
         "dataset": dataset_name,
-        "annotator_remarks": af.annotator_remarks,
         "collaborative_locked": {
             "speaker": af.collaborative_locked_speaker,
             "gender": af.collaborative_locked_gender,
