@@ -37,6 +37,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
+  // When the tab regains focus, verify the token is still in localStorage.
+  // Covers: manual DevTools removal, cross-tab logout.
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState !== "visible") return;
+      const token = localStorage.getItem("access_token");
+      if (!token && user) {
+        localStorage.removeItem("access_token");
+        setUser(null);
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [user]);
+
   const login = useCallback(async (username: string, password: string): Promise<AuthUser> => {
     const { data } = await api.post<{ access_token: string }>("/api/auth/login", {
       username,
@@ -49,6 +64,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    // Signal to AuthGuard that this is a voluntary logout so it skips the
+    // "Login required" warning toast.
+    if (typeof window !== "undefined") sessionStorage.setItem("just_logged_out", "1");
     localStorage.removeItem("access_token");
     setUser(null);
   }, []);

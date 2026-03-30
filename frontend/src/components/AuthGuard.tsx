@@ -21,9 +21,13 @@ export function AuthGuard({ role, children }: Props) {
   useEffect(() => {
     if (!mounted || isLoading) return;
     if (!user) {
-      if (!toasted.current) {
+      // Skip "Login required" toast if the user just voluntarily logged out.
+      const justLoggedOut = typeof window !== "undefined" && sessionStorage.getItem("just_logged_out") === "1";
+      if (typeof window !== "undefined") sessionStorage.removeItem("just_logged_out");
+      if (!toasted.current && !justLoggedOut) {
         toasted.current = true;
-        ToastWizard.standard("warning", "Login required", "Please log in to continue.", 3000);
+        // Defer via setTimeout to avoid calling flushSync inside a React render cycle.
+        setTimeout(() => ToastWizard.standard("warning", "Login required", "Please log in to continue.", 3000), 0);
       }
       router.replace("/login");
       return;
@@ -31,7 +35,7 @@ export function AuthGuard({ role, children }: Props) {
     if (role && user.role !== role) {
       if (!toasted.current) {
         toasted.current = true;
-        ToastWizard.standard("error", "Access denied", `This area is for ${role}s only.`, 3000);
+        setTimeout(() => ToastWizard.standard("error", "Access denied", `This area is for ${role}s only.`, 3000), 0);
       }
       router.replace(user.role === "admin" ? "/admin" : "/annotator");
     }

@@ -16,6 +16,7 @@ import { Calendar } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 import api from "@/lib/axios";
+import ToastWizard from "@/lib/toastWizard";
 import { useSSE } from "@/context/sse";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -110,6 +111,12 @@ export default function AnnotatorTasksPage() {
       const progMap: Record<number, EmotionProgress> = {};
       for (const p of epRes.data) progMap[p.file_id] = p;
       setEmotionProgress(progMap);
+    }).catch((err) => {
+      // 401/503/network errors are handled by the axios interceptor (redirect to login).
+      // Only show a toast for unexpected server errors so the user isn't double-notified.
+      const status = err?.response?.status;
+      if (status === 401 || status === 403 || status === 503 || !err?.response) return;
+      ToastWizard.standard("error", "Failed to load tasks", "Could not fetch your assignments. Please refresh.", 5000);
     }).finally(() => setLoading(false));
   }, []);
 

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@chakra-ui/react": "^3.0.0",
+    "@emotion/cache": "^11.14.0",
     "@emotion/react": "^11.13.3",
     "axios": "^1.7.7",
     "lucide-react": "^0.576.0",

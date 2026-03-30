@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import EmotionRegistry from "@/lib/emotion-registry";
 
 export const metadata: Metadata = {
   title: "AudioAnnotator",
@@ -11,7 +12,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <Providers>{children}</Providers>
+        <EmotionRegistry>
+          <Providers>{children}</Providers>
+        </EmotionRegistry>
       </body>
     </html>
   );
