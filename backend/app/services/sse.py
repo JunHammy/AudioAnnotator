@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 
 class SSEManager:
@@ -9,11 +12,33 @@ class SSEManager:
     Two channel types:
     - File channels  (keyed by audio_file_id) — segment create/update/delete, lock changes
     - User channels  (keyed by user_id)       — notifications, new assignments (app-wide)
+
+    When a subscriber's queue is full (slow or disconnected client), the oldest
+    event is dropped to make room for the newest one (sliding-window behaviour).
+    This ensures clients always receive the most recent state rather than
+    silently missing events with no indication.
     """
 
     def __init__(self) -> None:
         self._file_queues: dict[int, set[asyncio.Queue]] = defaultdict(set)
         self._user_queues: dict[int, set[asyncio.Queue]] = defaultdict(set)
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _put(q: asyncio.Queue, event: dict) -> None:
+        """Put an event onto the queue, evicting the oldest entry if full."""
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            try:
+                q.get_nowait()  # drop oldest
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                logger.warning("SSE queue still full after eviction — event dropped")
 
     # ── File channel ──────────────────────────────────────────────────────────
 
@@ -28,10 +53,7 @@ class SSEManager:
     async def broadcast(self, file_id: int, event: dict) -> None:
         """Push an event to every subscriber watching file_id."""
         for q in list(self._file_queues.get(file_id, [])):
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                pass
+            self._put(q, event)
 
     # ── User channel ──────────────────────────────────────────────────────────
 
@@ -46,10 +68,7 @@ class SSEManager:
     async def broadcast_user(self, user_id: int, event: dict) -> None:
         """Push an event to every session the given user has open."""
         for q in list(self._user_queues.get(user_id, [])):
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                pass
+            self._put(q, event)
 
 
 sse_manager = SSEManager()
