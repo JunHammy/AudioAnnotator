@@ -213,6 +213,7 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
             "speaker": af.collaborative_locked_speaker,
             "gender": af.collaborative_locked_gender,
             "transcription": af.collaborative_locked_transcription,
+            "emotion": af.collaborative_locked_emotion,
         },
         "segments": segments_out,
     }
