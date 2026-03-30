@@ -1078,15 +1078,13 @@ function AnnotateInner() {
   // ── Server-Sent Events — real-time segment sync ───────────────────────────
   useEffect(() => {
     if (!fileId) return
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null
-    if (!token) return
 
-    const es = new EventSource(`/api/events/${fileId}?token=${encodeURIComponent(token)}`)
+    const abortController = new AbortController()
+    let retryDelay = 1000
 
-    es.onmessage = (e: MessageEvent) => {
+    function handleEvent(raw: string) {
       let event: { type: string; data?: Record<string, unknown> }
-      try { event = JSON.parse(e.data) } catch { return }
-
+      try { event = JSON.parse(raw) } catch { return }
       const { type, data: d } = event
       if (!d) return
 
@@ -1139,11 +1137,43 @@ function AnnotateInner() {
       }
     }
 
-    es.onerror = () => {
-      // EventSource auto-reconnects on error — no action needed
+    async function run() {
+      while (!abortController.signal.aborted) {
+        const token = localStorage.getItem("access_token")
+        if (!token) break
+        try {
+          const res = await fetch(`/api/events/${fileId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: abortController.signal,
+          })
+          if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
+          const reader = res.body.getReader()
+          const decoder = new TextDecoder()
+          let buf = ""
+          while (true) {
+            const { value, done } = await reader.read()
+            if (done) break
+            buf += decoder.decode(value, { stream: true })
+            const frames = buf.split("\n\n")
+            buf = frames.pop() ?? ""
+            for (const frame of frames) {
+              for (const line of frame.split("\n")) {
+                if (line.startsWith("data:")) handleEvent(line.slice(5).trim())
+              }
+            }
+          }
+          retryDelay = 1000
+        } catch (err: unknown) {
+          if (abortController.signal.aborted) break
+          if (err instanceof Error && err.message.includes("401")) break
+          await new Promise(r => setTimeout(r, retryDelay))
+          retryDelay = Math.min(retryDelay * 2, 30_000)
+        }
+      }
     }
 
-    return () => es.close()
+    run()
+    return () => abortController.abort()
   }, [fileId])
 
   // Reset modal state whenever the file changes so stale open-state from a
