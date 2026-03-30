@@ -94,7 +94,7 @@ function fmtTime(t: number): string {
 }
 
 function emotionLabel(e: string): string {
-  return e.startsWith("Other:") ? `Other(${e.slice(6)})` : e
+  return e.startsWith("Other:") ? `Other: (${e.slice(6)})` : e
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────

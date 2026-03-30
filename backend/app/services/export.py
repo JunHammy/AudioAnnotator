@@ -25,8 +25,10 @@ JSON structure per file:
 
 import csv
 import io
+import json
 import re
 import zipfile
+from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
@@ -45,6 +47,51 @@ from app.models.models import (
 # ---------------------------------------------------------------------------
 
 _SAFE_NAME_RE = re.compile(r"[^\w\-.]")
+
+_BRACKET_WORDS_PATH = (
+    Path(__file__).parent.parent.parent.parent / "config" / "bracket_words.json"
+)
+
+
+def _load_bracket_words() -> tuple[list[str], list[str]]:
+    if not _BRACKET_WORDS_PATH.is_file():
+        return [], []
+    data = json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+    return data.get("parentheses", []), data.get("square_brackets", [])
+
+
+def _make_bracket_pattern(word: str) -> str:
+    """Build a regex pattern for a bracket word.
+    - Words with letters/digits use \\b boundaries so 'uh' won't match inside 'uhm'.
+    - Pure punctuation/symbols use no \\b (it doesn't apply to non-word chars).
+    Both variants skip tokens already wrapped in ( ) or [ ].
+    """
+    escaped = re.escape(word)
+    if re.search(r"\w", word):
+        return r"(?<![(\[])(\b" + escaped + r"\b)(?![)\]])"
+    else:
+        return r"(?<![(\[])(" + escaped + r")(?![)\]])"
+
+
+def _apply_bracket_words(text: str | None, parentheses: list[str], square_brackets: list[str]) -> str | None:
+    """Wrap filler/bracket words in the appropriate bracket type.
+    Skips tokens that are already wrapped to avoid double-bracketing.
+    """
+    if not text:
+        return text
+    for word in square_brackets:
+        text = re.sub(_make_bracket_pattern(word), r"[\1]", text, flags=re.IGNORECASE)
+    for word in parentheses:
+        text = re.sub(_make_bracket_pattern(word), r"(\1)", text, flags=re.IGNORECASE)
+    return text
+
+
+def _format_emotion_tag(tag: str) -> str:
+    """Convert 'Other:Excited' → 'Other: (Excited)'."""
+    if tag.startswith("Other:"):
+        desc = tag[6:].strip()
+        return f"Other: ({desc})" if desc else "Other"
+    return tag
 
 
 def _safe_stem(filename: str) -> str:
@@ -122,11 +169,30 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
         tr_by_key[key] = ts
 
     # --- 5. Assemble segments ----------------------------------------------
+    parentheses, square_brackets = _load_bracket_words()
+
     segments_out = []
     for seg in baseline_segs:
         key = f"{seg.start_time:.3f}-{seg.end_time:.3f}"
-        emotions = annotator_emotions.get(key)
+        raw_emotions = annotator_emotions.get(key)
         tr = tr_by_key.get(key)
+
+        # Apply bracket words to transcription text at export time
+        transcription = None
+        if tr:
+            transcription = {
+                "original_text": _apply_bracket_words(tr.original_text, parentheses, square_brackets),
+                "edited_text": _apply_bracket_words(tr.edited_text, parentheses, square_brackets),
+                "notes": tr.notes,
+            }
+
+        # Format Other:Xxx emotion tags as Other: (Xxx)
+        emotions = None
+        if raw_emotions:
+            emotions = {
+                username: [_format_emotion_tag(t) for t in tags]
+                for username, tags in raw_emotions.items()
+            }
 
         segments_out.append({
             "segment_id": seg.id,
@@ -134,12 +200,8 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
             "end_time": seg.end_time,
             "speaker_label": seg.speaker_label,
             "gender": seg.gender,
-            "transcription": {
-                "original_text": tr.original_text,
-                "edited_text": tr.edited_text,
-                "notes": tr.notes,
-            } if tr else None,
-            "emotion": emotions if emotions else None,
+            "transcription": transcription,
+            "emotion": emotions,
         })
 
     file_data = {

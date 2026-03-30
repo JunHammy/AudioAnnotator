@@ -2126,7 +2126,7 @@ function AnnotateInner() {
                                 if (!s.emotion?.length) return "—"
                                 if (s.emotion.length === 1) {
                                   const e = s.emotion[0]
-                                  return e.startsWith("Other:") ? `Other(${e.slice(6)})` : e
+                                  return e.startsWith("Other:") ? `Other: (${e.slice(6)})` : e
                                 }
                                 return `${s.emotion.length} emotions`
                               }}
