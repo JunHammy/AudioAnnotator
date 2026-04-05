@@ -93,19 +93,29 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    # ── Overall stats ──────────────────────────────────────────────────────────
-    total_files = (await db.execute(select(func.count(AudioFile.id)))).scalar_one()
+    # ── Overall stats (active files only — deleted files excluded throughout) ───
+    total_files = (await db.execute(
+        select(func.count(AudioFile.id)).where(AudioFile.is_deleted == False)  # noqa: E712
+    )).scalar_one()
 
     assigned_files = (await db.execute(
         select(func.count(distinct(Assignment.audio_file_id)))
+        .join(AudioFile, AudioFile.id == Assignment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
     )).scalar_one()
 
     completed_count = (await db.execute(
-        select(func.count(Assignment.id)).where(Assignment.status == "completed")
+        select(func.count(Assignment.id))
+        .join(AudioFile, AudioFile.id == Assignment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+        .where(Assignment.status == "completed")
     )).scalar_one()
 
     flagged_count = (await db.execute(
-        select(func.count(SpeakerSegment.id)).where(SpeakerSegment.is_ambiguous == True)
+        select(func.count(SpeakerSegment.id))
+        .join(AudioFile, AudioFile.id == SpeakerSegment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+        .where(SpeakerSegment.is_ambiguous == True)  # noqa: E712
     )).scalar_one()
 
     # Files with emotion annotators but fewer than 2 (need more for reliable consensus)
@@ -114,6 +124,8 @@ async def get_dashboard(
             SpeakerSegment.audio_file_id,
             func.count(distinct(SpeakerSegment.annotator_id)).label("ann_count"),
         )
+        .join(AudioFile, AudioFile.id == SpeakerSegment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
         .where(SpeakerSegment.source == "annotator")
         .group_by(SpeakerSegment.audio_file_id)
         .subquery()
@@ -122,7 +134,7 @@ async def get_dashboard(
         select(func.count()).select_from(_emotion_counts).where(_emotion_counts.c.ann_count < 2)
     )).scalar_one()
 
-    # ── Recent activity (last 10 assignments) ──────────────────────────────────
+    # ── Recent activity (last 10 assignments, active files only) ──────────────
     recent_rows = (await db.execute(
         select(
             Assignment.id,
@@ -135,14 +147,15 @@ async def get_dashboard(
         )
         .join(AudioFile, Assignment.audio_file_id == AudioFile.id)
         .join(User, Assignment.annotator_id == User.id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
         .order_by(Assignment.created_at.desc())
         .limit(10)
     )).all()
 
-    # ── Dataset progress ───────────────────────────────────────────────────────
-    # Files per dataset (including unassigned bucket)
+    # ── Dataset progress (active files only) ───────────────────────────────────
     ds_files = (await db.execute(
         select(AudioFile.dataset_id, func.count(AudioFile.id).label("total"))
+        .where(AudioFile.is_deleted == False)  # noqa: E712
         .group_by(AudioFile.dataset_id)
         .order_by(func.count(AudioFile.id).desc())
     )).all()
@@ -154,6 +167,7 @@ async def get_dashboard(
             func.sum(case((Assignment.status == "completed", 1), else_=0)).label("done_assign"),
         )
         .join(AudioFile, Assignment.audio_file_id == AudioFile.id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
         .group_by(AudioFile.dataset_id)
     )).all()
 
@@ -174,7 +188,7 @@ async def get_dashboard(
             "completion_rate": round(done_a / total_a, 2) if total_a else 0.0,
         })
 
-    # ── Annotator summary ──────────────────────────────────────────────────────
+    # ── Annotator summary (assignments on active files only) ──────────────────
     annotator_rows = (await db.execute(
         select(
             User.id,
@@ -186,18 +200,21 @@ async def get_dashboard(
             func.sum(case((Assignment.status == "completed", 1), else_=0)).label("completed"),
         )
         .outerjoin(Assignment, User.id == Assignment.annotator_id)
+        .outerjoin(AudioFile, (AudioFile.id == Assignment.audio_file_id) & (AudioFile.is_deleted == False))  # noqa: E712
         .where(User.role == "annotator")
         .group_by(User.id)
         .order_by(User.username)
     )).all()
 
-    # ── Task breakdown by type ─────────────────────────────────────────────────
+    # ── Task breakdown by type (active files only) ─────────────────────────────
     task_rows = (await db.execute(
         select(
             Assignment.task_type,
             func.count(Assignment.id).label("total"),
             func.sum(case((Assignment.status == "completed", 1), else_=0)).label("done"),
         )
+        .join(AudioFile, AudioFile.id == Assignment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
         .group_by(Assignment.task_type)
     )).all()
     task_breakdown = {
