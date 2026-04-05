@@ -132,7 +132,11 @@ async def upload_audio_file(
     dest_path = _resolve_safe(dest_dir, audio_name)
 
     # ── Duplicate check ───────────────────────────────────────────────────────
-    existing = await db.execute(select(AudioFile).where(AudioFile.filename == audio_name))
+    existing = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.filename == audio_name)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+    )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail=f"File '{audio_name}' already exists.")
 
@@ -328,21 +332,52 @@ async def add_json_to_file(
                 af.num_speakers = max(int(ns), 1) if ns else None
 
     elif json_type == "transcription":
-        existing_check = (await db.execute(
-            select(TranscriptionSegment.id).where(TranscriptionSegment.audio_file_id == file_id).limit(1)
+        # Only skip if an admin has already linked transcription segments for this file.
+        # Annotator-created segments (e.g. auto-created blank ones from speaker segment
+        # creation) must NOT block the admin from linking the canonical transcription JSON.
+        admin_existing = (await db.execute(
+            select(TranscriptionSegment.id)
+            .where(TranscriptionSegment.audio_file_id == file_id)
+            .where(TranscriptionSegment.annotator_id == admin.id)
+            .limit(1)
         )).scalar_one_or_none()
-        if not existing_check:
+        if not admin_existing:
             texts = data.get("texts", [])
+            new_trans = []
             for t in texts:
-                db.add(TranscriptionSegment(
+                seg = TranscriptionSegment(
                     audio_file_id=file_id,
                     annotator_id=admin.id,
                     start_time=round(float(t.get("start_time", 0)), 3),
                     end_time=round(float(t.get("end_time", 0)), 3),
                     original_text=t.get("text", ""),
-                ))
+                )
+                db.add(seg)
+                new_trans.append(seg)
             if texts and not af.duration:
                 af.duration = round(max((t.get("end_time", 0) for t in texts), default=0.0), 2)
+            await db.flush()
+            # Notify open annotate pages so they reload transcription data without
+            # requiring a manual refresh.
+            for seg in new_trans:
+                await db.refresh(seg)
+            await sse_manager.broadcast(file_id, {
+                "type": "transcription_linked",
+                "data": {
+                    "segments": [
+                        {
+                            "id": s.id,
+                            "start_time": s.start_time,
+                            "end_time": s.end_time,
+                            "original_text": s.original_text,
+                            "edited_text": s.edited_text,
+                            "notes": s.notes,
+                            "updated_at": s.updated_at.isoformat(),
+                        }
+                        for s in new_trans
+                    ]
+                },
+            })
 
     # emotion_gender: stored in JSON store only; used during review finalisation
 

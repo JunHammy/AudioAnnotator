@@ -28,7 +28,11 @@ async def list_assignments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = select(Assignment)
+    query = (
+        select(Assignment)
+        .join(AudioFile, AudioFile.id == Assignment.audio_file_id)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+    )
     if current_user.role == "annotator":
         query = query.where(Assignment.annotator_id == current_user.id)
     if audio_file_id is not None:

@@ -1124,6 +1124,19 @@ function AnnotateInner() {
           transcription_segments: prev.transcription_segments.filter(s => s.id !== d.id),
         } : prev)
         setSelection(prev => prev?.type === "transcription" && prev.segment.id === d.id ? null : prev)
+      } else if (type === "transcription_linked") {
+        // Admin linked a transcription JSON while this page was open — merge in all
+        // new segments so the annotator doesn't need to manually refresh.
+        const incoming = (d as { segments: TranscriptSegment[] }).segments ?? []
+        setData(prev => {
+          if (!prev || incoming.length === 0) return prev
+          const existingIds = new Set(prev.transcription_segments.map(s => s.id))
+          const toAdd = incoming.filter(s => !existingIds.has(s.id))
+          if (toAdd.length === 0) return prev
+          const next = [...prev.transcription_segments, ...toAdd]
+          next.sort((a, b) => a.start_time - b.start_time)
+          return { ...prev, transcription_segments: next }
+        })
       } else if (type === "lock_changed") {
         setData(prev => prev ? {
           ...prev,

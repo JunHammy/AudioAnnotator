@@ -509,7 +509,7 @@ async def get_annotate_data(
     - Emotions always start empty (None) — never copied from baseline to prevent bias.
     """
     af = (await db.execute(select(AudioFile).where(AudioFile.id == file_id))).scalar_one_or_none()
-    if not af:
+    if not af or af.is_deleted:
         raise HTTPException(status_code=404, detail="Audio file not found")
 
     emotion_gated = not af.collaborative_locked_speaker
