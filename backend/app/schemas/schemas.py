@@ -355,6 +355,14 @@ class SpeakerSegmentResponse(BaseModel):
     source:        Optional[str]
     updated_at:    datetime
 
+    @field_validator("emotion", mode="before")
+    @classmethod
+    def coerce_emotion_to_list(cls, v):
+        """Coerce legacy string emotion values to a list (pre-migration data)."""
+        if isinstance(v, str):
+            return [v]
+        return v
+
 
 class SpeakerSegmentUpdate(BaseModel):
     speaker_label: Optional[str]        = None
