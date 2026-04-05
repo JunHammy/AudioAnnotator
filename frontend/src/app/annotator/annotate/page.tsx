@@ -1794,15 +1794,13 @@ function AnnotateInner() {
     )
   }
 
-  if (loading) {
+  if (!data) {
     return (
       <Box p={8} display="flex" justifyContent="center">
         <Spinner />
       </Box>
     )
   }
-
-  if (!data) return null
 
   // Prefer DB-stored duration; fall back to the actual duration from WaveSurfer
   // once it loads. This ensures tracks render even for audio-only uploads where
@@ -2028,7 +2026,9 @@ function AnnotateInner() {
           </Box>
 
           {/* ── Scrollable bottom: speaker accordions + emotion ── */}
-          <Box flex={1} minH={0} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}>
+          <Box flex={1} minH={0} overflowY="auto" p={4} display="flex" flexDir="column" gap={4}
+            opacity={loading ? 0.5 : 1} pointerEvents={loading ? "none" : undefined}
+            transition="opacity 0.15s">
 
           {/* Segment tracks */}
           {data.assignments.length > 0 && (
