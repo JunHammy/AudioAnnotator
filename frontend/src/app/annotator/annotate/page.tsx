@@ -1369,19 +1369,34 @@ function AnnotateInner() {
     })
   }
 
-  // Populate WaveSurfer regions whenever speaker segments or waveform readiness change
+  // Populate WaveSurfer regions whenever speaker segments or waveform readiness change.
+  // All annotators see colour-coded regions for reference; only speaker annotators
+  // can drag/resize them (controlled via onRegionUpdate / onRangeSelect props).
   useEffect(() => {
-    if (!waveformReady || !data || !playerRef.current || !isSpeakerAnnotator) return
-    playerRef.current.clearRegions()
-    for (const seg of data.speaker_segments) {
-      playerRef.current.addRegion(
-        String(seg.id),
-        seg.start_time,
-        seg.end_time,
-        speakerColor(seg.speaker_label) + "40",
-      )
+    if (!waveformReady || !data) return
+
+    const draw = () => {
+      if (!playerRef.current) return
+      playerRef.current.clearRegions()
+      for (const seg of data.speaker_segments) {
+        playerRef.current.addRegion(
+          String(seg.id),
+          seg.start_time,
+          seg.end_time,
+          speakerColor(seg.speaker_label) + "40",
+        )
+      }
     }
-  }, [waveformReady, data, isSpeakerAnnotator])
+
+    // playerRef is populated by the dynamic-imported WaveformPlayer after it mounts.
+    // If it isn't available yet (dynamic import still in flight), defer by one frame.
+    if (playerRef.current) {
+      draw()
+    } else {
+      const raf = requestAnimationFrame(draw)
+      return () => cancelAnimationFrame(raf)
+    }
+  }, [waveformReady, data])
 
   // Region drag/resize on waveform — update the open SegmentEditor's time fields (no auto-save)
   const handleRegionUpdate = useCallback(

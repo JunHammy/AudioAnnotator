@@ -374,9 +374,18 @@ class SpeakerSegmentUpdate(BaseModel):
     end_time:      Optional[float]      = None   # time editing (pre_annotated only)
     updated_at:    datetime  # Optimistic locking: client sends last-known updated_at
 
-    @field_validator("gender")
+    @field_validator("emotion", mode="before")
+    @classmethod
+    def coerce_emotion_to_list(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
+
+    @field_validator("gender", mode="before")
     @classmethod
     def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str):
+            v = v.lower() if v.lower() == "unk" else v
         if v is not None and v not in _VALID_GENDERS:
             raise ValueError(f"gender must be one of: {sorted(_VALID_GENDERS)}")
         return v
@@ -404,9 +413,11 @@ class SpeakerSegmentCreate(BaseModel):
     speaker_label: Optional[str] = None
     gender:        Optional[str] = None
 
-    @field_validator("gender")
+    @field_validator("gender", mode="before")
     @classmethod
     def validate_gender(cls, v: Optional[str]) -> Optional[str]:
+        if isinstance(v, str):
+            v = v.lower() if v.lower() == "unk" else v
         if v is not None and v not in _VALID_GENDERS:
             raise ValueError(f"gender must be one of: {sorted(_VALID_GENDERS)}")
         return v
