@@ -668,6 +668,7 @@ async def toggle_task_lock(
         "type": "lock_changed",
         "data": {
             "locked_speaker": af.collaborative_locked_speaker,
+            "locked_gender": af.collaborative_locked_gender,
             "locked_transcription": af.collaborative_locked_transcription,
             "locked_emotion": af.collaborative_locked_emotion,
         },

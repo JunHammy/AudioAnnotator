@@ -58,6 +58,7 @@ interface AnnotateData {
     annotator_remarks: string | null
     admin_response: string | null
     locked_speaker: boolean
+    locked_gender: boolean
     locked_transcription: boolean
     locked_emotion: boolean
   }
@@ -1143,6 +1144,7 @@ function AnnotateInner() {
           audio_file: {
             ...prev.audio_file,
             locked_speaker: d.locked_speaker as boolean,
+            locked_gender: d.locked_gender as boolean,
             locked_transcription: d.locked_transcription as boolean,
             locked_emotion: d.locked_emotion as boolean,
           },
@@ -1928,7 +1930,8 @@ function AnnotateInner() {
           {/* Assignment status pills */}
           {data.assignments.map(a => {
             const isLocked =
-              (a.task_type === "speaker" || a.task_type === "gender") ? data.audio_file.locked_speaker
+              a.task_type === "speaker" ? data.audio_file.locked_speaker
+              : a.task_type === "gender" ? data.audio_file.locked_gender
               : a.task_type === "transcription" ? data.audio_file.locked_transcription
               : a.task_type === "emotion" ? data.audio_file.locked_emotion
               : false

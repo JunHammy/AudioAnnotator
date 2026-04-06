@@ -620,6 +620,7 @@ async def get_annotate_data(
             "annotator_remarks": af.annotator_remarks,
             "admin_response": af.admin_response,
             "locked_speaker": af.collaborative_locked_speaker,
+            "locked_gender": af.collaborative_locked_gender,
             "locked_transcription": af.collaborative_locked_transcription,
             "locked_emotion": af.collaborative_locked_emotion,
         },
