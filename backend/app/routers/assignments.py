@@ -237,7 +237,12 @@ async def delete_assignment(
     assignment = result.scalar_one_or_none()
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
+    await write_audit_log(db, _admin.id, "delete_assignment", "assignment", assignment.id,
+                          {"audio_file_id": assignment.audio_file_id,
+                           "annotator_id": assignment.annotator_id,
+                           "task_type": assignment.task_type})
     await db.delete(assignment)
+    await db.flush()
 
 
 @router.patch("/{assignment_id}/status", response_model=AssignmentResponse)

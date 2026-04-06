@@ -59,8 +59,10 @@ async def export_file(
     admin: User = Depends(require_admin),
 ):
     """Download finalized annotations for one audio file."""
-    # Verify the file exists
-    result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
+    # Verify the file exists and is not archived
+    result = await db.execute(
+        select(AudioFile).where(AudioFile.id == file_id, AudioFile.is_deleted == False)  # noqa: E712
+    )
     af = result.scalar_one_or_none()
     if af is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audio file not found.")
@@ -119,7 +121,9 @@ async def export_dataset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found.")
 
     files_result = await db.execute(
-        select(AudioFile).where(AudioFile.dataset_id == dataset_id).order_by(AudioFile.filename)
+        select(AudioFile)
+        .where(AudioFile.dataset_id == dataset_id, AudioFile.is_deleted == False)  # noqa: E712
+        .order_by(AudioFile.filename)
     )
     files = list(files_result.scalars().all())
     if not files:
@@ -184,7 +188,9 @@ async def export_all(
 ):
     """Download finalized annotations for every file in the system."""
     files_result = await db.execute(
-        select(AudioFile).order_by(AudioFile.filename)
+        select(AudioFile)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+        .order_by(AudioFile.filename)
     )
     files = list(files_result.scalars().all())
     if not files:

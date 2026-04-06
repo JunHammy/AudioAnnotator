@@ -90,9 +90,6 @@ async def delete_dataset(
         raise HTTPException(status_code=404, detail="Dataset not found")
 
     # Detach all audio files (set dataset_id to NULL)
-    await db.execute(
-        select(AudioFile).where(AudioFile.dataset_id == dataset_id)
-    )
     files_result = await db.execute(select(AudioFile).where(AudioFile.dataset_id == dataset_id))
     for af in files_result.scalars().all():
         af.dataset_id = None

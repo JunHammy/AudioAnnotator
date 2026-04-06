@@ -59,6 +59,7 @@ async def delete_user(
     await write_audit_log(db, _admin.id, "delete_user", "user", user.id,
                           {"username": user.username, "role": user.role})
     await db.delete(user)
+    await db.flush()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

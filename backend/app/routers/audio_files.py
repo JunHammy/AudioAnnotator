@@ -102,6 +102,8 @@ async def get_audio_file(
     af = result.scalar_one_or_none()
     if not af:
         raise HTTPException(status_code=404, detail="Audio file not found")
+    if af.is_deleted and _user.role != "admin":
+        raise HTTPException(status_code=404, detail="Audio file not found")
     return af
 
 

@@ -34,7 +34,11 @@ async def list_review_files(
     db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    files_result = await db.execute(select(AudioFile).order_by(AudioFile.created_at.desc()))
+    files_result = await db.execute(
+        select(AudioFile)
+        .where(AudioFile.is_deleted == False)  # noqa: E712
+        .order_by(AudioFile.created_at.desc())
+    )
     files = files_result.scalars().all()
 
     out = []
