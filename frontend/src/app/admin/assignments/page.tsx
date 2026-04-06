@@ -20,7 +20,7 @@ import {
   Portal,
   createListCollection,
 } from "@chakra-ui/react";
-import { AlertTriangle, Archive, Calendar, ClipboardCheck, Pause, Play, Plus, RotateCcw, Trash2, Users, Zap } from "lucide-react";
+import { AlertTriangle, Calendar, ClipboardCheck, Pause, Play, Plus, RotateCcw, Trash2, Users, Zap } from "lucide-react";
 import api from "@/lib/axios";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -134,9 +134,6 @@ export default function AssignTasksPage() {
   const audioRef   = useRef<HTMLAudioElement | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
-  // Archive state
-  const [archiving,      setArchiving]      = useState<Set<number>>(new Set());
-  const [showArchived,   setShowArchived]   = useState(false);
 
   // File list search
   const [fileSearch,     setFileSearch]     = useState("");
@@ -154,7 +151,7 @@ export default function AssignTasksPage() {
 
   useEffect(() => {
     Promise.all([
-      api.get(`/api/audio-files/?include_deleted=${showArchived}`),
+      api.get("/api/audio-files/"),
       api.get("/api/users/"),
     ])
       .then(([af, u]) => {
@@ -163,7 +160,7 @@ export default function AssignTasksPage() {
         if (af.data.length > 0) setSelectedFile(af.data[0]);
       })
       .finally(() => setLoading(false));
-  }, [showArchived]);
+  }, []);
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -362,33 +359,6 @@ export default function AssignTasksPage() {
     }
   }
 
-  async function archiveFile(fileId: number) {
-    setArchiving(prev => new Set(prev).add(fileId));
-    try {
-      await api.delete(`/api/audio-files/${fileId}`);
-      setAudioFiles(prev => prev.filter(f => f.id !== fileId));
-      if (selectedFile?.id === fileId) setSelectedFile(null);
-      ToastWizard.standard("success", "File archived", "File hidden from all lists.", 3000, true);
-    } catch {
-      ToastWizard.standard("error", "Archive failed", "Could not archive file.", 3000, true);
-    } finally {
-      setArchiving(prev => { const s = new Set(prev); s.delete(fileId); return s; });
-    }
-  }
-
-  async function restoreFile(fileId: number) {
-    setArchiving(prev => new Set(prev).add(fileId));
-    try {
-      const res = await api.patch(`/api/audio-files/${fileId}/restore`);
-      setAudioFiles(prev => prev.map(f => f.id === fileId ? { ...f, is_deleted: false } : f));
-      ToastWizard.standard("success", "File restored", res.data.filename, 3000, true);
-    } catch {
-      ToastWizard.standard("error", "Restore failed", "Could not restore file.", 3000, true);
-    } finally {
-      setArchiving(prev => { const s = new Set(prev); s.delete(fileId); return s; });
-    }
-  }
-
   async function saveMetaForAnnotator(annotatorId: number) {
     if (!editPriority[0]) return;
     const rows = assignments.filter(a => a.annotator_id === annotatorId);
@@ -426,15 +396,6 @@ export default function AssignTasksPage() {
       <HStack mb={1} justify="space-between" align="flex-start">
         <Heading size="lg" color="fg">Assign Tasks</Heading>
         <HStack gap={2}>
-          <Button
-            size="sm"
-            variant={showArchived ? "solid" : "outline"}
-            colorPalette={showArchived ? "orange" : "gray"}
-            onClick={() => setShowArchived(v => !v)}
-          >
-            <Archive size={14} />
-            {showArchived ? "Hide Archived" : "Show Archived"}
-          </Button>
           <Button size="sm" colorPalette="teal" variant="outline" onClick={() => { resetBulk(); setBulkOpen(true); }}>
             <Users size={14} />
             Bulk Assign
@@ -490,55 +451,27 @@ export default function AssignTasksPage() {
                     cursor="pointer"
                     bg={isSelected ? "bg.muted" : "transparent"}
                     borderLeftWidth="3px"
-                    borderLeftColor={isSelected ? (af.is_deleted ? "orange.400" : "blue.400") : "transparent"}
+                    borderLeftColor={isSelected ? "blue.400" : "transparent"}
                     _hover={{ bg: "bg.muted" }}
                     onClick={() => setSelectedFile(af)}
                     borderBottomWidth="1px"
                     borderBottomColor="border"
-                    opacity={af.is_deleted ? 0.55 : 1}
                   >
                     <Flex justify="space-between" align="flex-start" mb={0.5}>
                       <Text fontSize="sm" color="fg" fontFamily="mono" flex={1} mr={1}>
                         {af.filename.replace(/\.[^.]+$/, "")}
                       </Text>
                       <HStack gap={0.5} flexShrink={0} onClick={e => e.stopPropagation()}>
-                        {!af.is_deleted && (
-                          <IconButton
-                            aria-label="Preview audio"
-                            size="2xs"
-                            variant="ghost"
-                            color={playingFileId === af.id ? "blue.400" : "fg.muted"}
-                            onClick={() => togglePreview(af.id)}
-                            title="Preview audio"
-                          >
-                            {playingFileId === af.id ? <Pause size={11} /> : <Play size={11} />}
-                          </IconButton>
-                        )}
-                        {af.is_deleted ? (
-                          <IconButton
-                            aria-label="Restore file"
-                            size="2xs"
-                            variant="ghost"
-                            color="orange.400"
-                            loading={archiving.has(af.id)}
-                            onClick={() => restoreFile(af.id)}
-                            title="Restore file"
-                          >
-                            <RotateCcw size={11} />
-                          </IconButton>
-                        ) : (
-                          <IconButton
-                            aria-label="Archive file"
-                            size="2xs"
-                            variant="ghost"
-                            color="fg.muted"
-                            loading={archiving.has(af.id)}
-                            onClick={() => archiveFile(af.id)}
-                            title="Archive file (soft delete)"
-                          >
-                            <Archive size={11} />
-                          </IconButton>
-                        )}
+                        <IconButton
+                          aria-label="Preview audio"
+                          size="2xs"
+                          variant="ghost"
+                          color={playingFileId === af.id ? "blue.400" : "fg.muted"}
+                          onClick={() => togglePreview(af.id)}
+                          title="Preview audio"
+                        >
+                          {playingFileId === af.id ? <Pause size={11} /> : <Play size={11} />}
+                        </IconButton>
                       </HStack>
                     </Flex>
                     <Flex gap={3} align="center">
@@ -547,7 +480,6 @@ export default function AssignTasksPage() {
                       <Text fontSize="xs" color="fg.muted" fontFamily="mono">
                         {af.duration ? `${af.duration.toFixed(0)}s` : ""}
                       </Text>
-                      {af.is_deleted && <Badge colorPalette="orange" size="sm" variant="subtle">archived</Badge>}
                     </Flex>
                   </Box>
                 );

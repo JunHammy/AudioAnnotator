@@ -439,6 +439,42 @@ async def archive_audio_file(
     await db.flush()
 
 
+@router.delete("/{file_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def permanently_delete_audio_file(
+    file_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Hard-delete an archived audio file and all associated data. Irreversible."""
+    result = await db.execute(select(AudioFile).where(AudioFile.id == file_id))
+    af = result.scalar_one_or_none()
+    if not af:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    if not af.is_deleted:
+        raise HTTPException(status_code=400, detail="File must be archived before permanent deletion.")
+
+    filename = af.filename
+    file_path = af.file_path
+
+    # Cascade deletes (SQLAlchemy relationships handle most, but do explicit for clarity)
+    await db.execute(sa_delete(SpeakerSegment).where(SpeakerSegment.audio_file_id == file_id))
+    await db.execute(sa_delete(TranscriptionSegment).where(TranscriptionSegment.audio_file_id == file_id))
+    await db.execute(sa_delete(Assignment).where(Assignment.audio_file_id == file_id))
+    await db.execute(sa_delete(FinalAnnotation).where(FinalAnnotation.audio_file_id == file_id))
+    await db.execute(sa_delete(OriginalJSONStore).where(OriginalJSONStore.audio_file_id == file_id))
+    await db.delete(af)
+    await db.flush()
+
+    # Remove file from disk
+    try:
+        Path(file_path).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    await write_audit_log(db, admin.id, "permanent_delete_audio", "audio_file", file_id,
+                          {"filename": filename})
+
+
 @router.patch("/{file_id}/restore", response_model=AudioFileResponse)
 async def restore_audio_file(
     file_id: int,
