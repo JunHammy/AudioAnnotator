@@ -2261,7 +2261,8 @@ function AnnotateInner() {
             onSpeakerSegHover={setHoveredSpeakerSegId}
             canEditGender={hasTask("gender")}
             locked={
-              selection.type === "speaker" ? data.audio_file.locked_speaker
+              selection.type === "speaker"
+                ? (hasTask("speaker") ? data.audio_file.locked_speaker : data.audio_file.locked_gender)
               : selection.type === "transcription" ? data.audio_file.locked_transcription
               : selection.type === "emotion" ? data.audio_file.locked_emotion
               : false

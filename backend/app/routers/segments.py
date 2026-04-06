@@ -57,6 +57,15 @@ async def _check_speaker_lock(db: AsyncSession, audio_file_id: int, user: User) 
         raise LOCKED_ERROR
 
 
+async def _check_gender_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
+    """Raise 423 if gender track is locked and user is not admin."""
+    if user.role == "admin":
+        return
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == audio_file_id))).scalar_one_or_none()
+    if af and af.collaborative_locked_gender:
+        raise LOCKED_ERROR
+
+
 async def _check_transcription_lock(db: AsyncSession, audio_file_id: int, user: User) -> None:
     """Raise 423 if transcription track is locked and user is not admin."""
     if user.role == "admin":
@@ -106,7 +115,20 @@ async def update_speaker_segment(
     if segment.source == "annotator":
         await _check_emotion_lock(db, segment.audio_file_id, current_user)
     else:
-        await _check_speaker_lock(db, segment.audio_file_id, current_user)
+        # Gender-only annotators are blocked by the gender lock, not the speaker lock.
+        # Annotators with a speaker task are blocked by the speaker lock.
+        has_speaker_task = current_user.role == "admin" or bool(
+            (await db.execute(
+                select(Assignment.id)
+                .where(Assignment.audio_file_id == segment.audio_file_id)
+                .where(Assignment.annotator_id == current_user.id)
+                .where(Assignment.task_type == "speaker")
+            )).scalar_one_or_none()
+        )
+        if has_speaker_task:
+            await _check_speaker_lock(db, segment.audio_file_id, current_user)
+        else:
+            await _check_gender_lock(db, segment.audio_file_id, current_user)
 
     # Optimistic locking — only enforced for label/metadata changes, not time-only (drag) changes.
     # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
