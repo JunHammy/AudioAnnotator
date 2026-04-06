@@ -204,8 +204,11 @@ function EmotionTab({
     try {
       const res = await api.get(`/api/review/${fileId}/emotion`)
       setSegments(res.data)
-    } catch {
-      ToastWizard.standard("error", "Failed to load emotion review data")
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      if (status !== 404) {
+        ToastWizard.standard("error", "Failed to load emotion review data")
+      }
     } finally {
       setLoading(false)
     }
@@ -247,6 +250,13 @@ function EmotionTab({
         <Badge colorPalette="blue">{segments.length} segments</Badge>
         <Badge colorPalette="gray">{segments.filter(s => s.annotations.length > 0).length} annotated</Badge>
       </HStack>
+
+      {segments.length === 0 && (
+        <Box py={10} textAlign="center" w="full" color="fg.muted">
+          <Text fontSize="sm">No speaker segments yet.</Text>
+          <Text fontSize="xs" mt={1}>Assign and complete a speaker task first, then emotion annotation can begin.</Text>
+        </Box>
+      )}
 
       {/* Table */}
       <Box w="full" overflowX="auto">

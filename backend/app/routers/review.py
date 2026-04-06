@@ -83,7 +83,7 @@ async def get_emotion_review(
         .order_by(SpeakerSegment.start_time)
     )).scalars().all()
     if not baseline:
-        raise HTTPException(status_code=404, detail="No baseline segments found.")
+        return []  # no segments yet — valid state for fresh uploads
 
     ann_rows = (await db.execute(
         select(SpeakerSegment, User.username)
