@@ -337,6 +337,8 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   getGenderForSpeaker?: (label: string) => string
   onSpeakerSegHover?: (id: number | null) => void
   canEditGender?: boolean
+  lockedSpeaker?: boolean
+  lockedGender?: boolean
   locked?: boolean
 }>(function SegmentEditor({
   selection,
@@ -350,8 +352,16 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   getGenderForSpeaker,
   onSpeakerSegHover,
   canEditGender = false,
+  lockedSpeaker = false,
+  lockedGender = false,
   locked = false,
 }, ref) {
+  // isSaveDisabled: each track type has its own independent lock.
+  // For speaker-type: disabled only when BOTH speaker AND gender are unavailable.
+  const isSaveDisabled =
+    selection.type === "speaker"
+      ? (lockedSpeaker && (!canEditGender || lockedGender))
+      : locked  // transcription / emotion use the simple lock prop
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -407,15 +417,20 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
         onSaved(type, res.data, segment)
         ToastWizard.standard("success", "Emotion saved")
       } else if (type === "speaker") {
-        const payload: Record<string, unknown> = {
-          speaker_label: speakerLabel || null,
-          gender: gender || null,
-          is_ambiguous: isAmbiguous,
-          notes: notes || null,
-          updated_at: segment.updated_at,
+        const payload: Record<string, unknown> = { updated_at: segment.updated_at }
+        // Speaker structural fields — only include when speaker track is not locked
+        if (!lockedSpeaker) {
+          payload.speaker_label = speakerLabel || null
+          payload.is_ambiguous = isAmbiguous
+          if (startTime !== segment.start_time) payload.start_time = startTime
+          if (endTime !== segment.end_time) payload.end_time = endTime
         }
-        if (startTime !== segment.start_time) payload.start_time = startTime
-        if (endTime !== segment.end_time) payload.end_time = endTime
+        // Gender — independent track, only blocked by gender lock
+        if (!lockedGender) {
+          payload.gender = gender || null
+        }
+        // Notes — always saveable (not a locked structural field)
+        payload.notes = notes || null
         const timesChanged = payload.start_time !== undefined || payload.end_time !== undefined
 
         res = await api.patch(`/api/segments/speaker/${segment.id}`, payload)
@@ -633,6 +648,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                     min={0}
                     value={startTime}
                     onChange={e => setStartTime(parseFloat(e.target.value) || 0)}
+                    disabled={lockedSpeaker}
                   />
                 </Field.Root>
                 <Field.Root>
@@ -644,6 +660,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                     min={0}
                     value={endTime}
                     onChange={e => setEndTime(parseFloat(e.target.value) || 0)}
+                    disabled={lockedSpeaker}
                   />
                 </Field.Root>
               </HStack>
@@ -689,6 +706,11 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                     ✕
                   </Button>
                 </HStack>
+              ) : lockedSpeaker ? (
+                <Box px={2} py={1} bg="bg.muted" borderWidth="1px" borderColor="border" rounded="sm" fontSize="sm" color="fg.subtle">
+                  {speakerLabel || "Unknown"}
+                  <Text as="span" fontSize="10px" color="fg.subtle" ml={2}>(locked)</Text>
+                </Box>
               ) : (
                 <Select.Root
                   collection={createListCollection({
@@ -743,7 +765,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
 
             <Field.Root>
               <Field.Label fontSize="xs">Gender</Field.Label>
-              {canEditGender ? (
+              {canEditGender && !lockedGender ? (
                 <Select.Root
                   collection={genderCollection}
                   size="sm"
@@ -768,7 +790,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                   color={gender && gender !== "unk" ? genderColor(gender) : "fg.subtle"}
                 >
                   {gender && gender !== "unk" ? gender : "Unknown"}
-                  <Text as="span" fontSize="10px" color="fg.subtle" ml={2}>(read-only — no gender task assigned)</Text>
+                  <Text as="span" fontSize="10px" color="fg.subtle" ml={2}>
+                    {lockedGender ? "(locked)" : "(read-only — no gender task assigned)"}
+                  </Text>
                 </Box>
               )}
             </Field.Root>
@@ -777,6 +801,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
               checked={isAmbiguous}
               onCheckedChange={({ checked }) => setIsAmbiguous(!!checked)}
               size="sm"
+              disabled={lockedSpeaker}
             >
               <Checkbox.HiddenInput />
               <Checkbox.Control />
@@ -908,8 +933,8 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
           />
         </Field.Root>
 
-        <Button size="sm" colorPalette="blue" loading={saving} disabled={locked} onClick={save}
-          title={locked ? "This task is locked — no further changes allowed" : undefined}>
+        <Button size="sm" colorPalette="blue" loading={saving} disabled={isSaveDisabled} onClick={save}
+          title={isSaveDisabled ? "This task is locked — no further changes allowed" : undefined}>
           <Save size={14} />
           Save
         </Button>
@@ -919,9 +944,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
             size="sm"
             colorPalette="red"
             variant="outline"
-            disabled={locked}
+            disabled={isSaveDisabled}
             onClick={handleDelete}
-            title={locked ? "This task is locked — no further changes allowed" : undefined}
+            title={isSaveDisabled ? "This task is locked — no further changes allowed" : undefined}
           >
             <Trash2 size={14} />
             Delete Segment
@@ -2260,10 +2285,10 @@ function AnnotateInner() {
             getGenderForSpeaker={getGenderForSpeaker}
             onSpeakerSegHover={setHoveredSpeakerSegId}
             canEditGender={hasTask("gender")}
+            lockedSpeaker={data.audio_file.locked_speaker}
+            lockedGender={data.audio_file.locked_gender}
             locked={
-              selection.type === "speaker"
-                ? (hasTask("speaker") ? data.audio_file.locked_speaker : data.audio_file.locked_gender)
-              : selection.type === "transcription" ? data.audio_file.locked_transcription
+              selection.type === "transcription" ? data.audio_file.locked_transcription
               : selection.type === "emotion" ? data.audio_file.locked_emotion
               : false
             }

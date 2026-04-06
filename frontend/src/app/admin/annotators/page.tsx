@@ -26,8 +26,6 @@ interface Annotator {
   id: number;
   username: string;
   role: string;
-  trust_score: number;
-  segments_reviewed: number;
   is_active: boolean;
   created_at: string;
 }
@@ -472,7 +470,7 @@ export default function ManageAnnotatorsPage() {
           <Table.Root size="sm">
             <Table.Header>
               <Table.Row>
-                {["Username", "Segments Reviewed", "Trust Score", "Status", "Created", "Actions"].map((h) => (
+                {["Username", "Status", "Created", "Actions"].map((h) => (
                   <Table.ColumnHeader key={h} color="fg.muted" fontSize="xs" px={4} py={3}>{h}</Table.ColumnHeader>
                 ))}
               </Table.Row>
@@ -481,8 +479,6 @@ export default function ManageAnnotatorsPage() {
               {active.map((u) => (
                 <Table.Row key={u.id} _hover={{ bg: "bg.muted" }}>
                   <Table.Cell px={4} py={3}><Text fontSize="sm" color="fg">{u.username}</Text></Table.Cell>
-                  <Table.Cell px={4} py={3}><Text fontSize="sm" color="fg">{u.segments_reviewed}</Text></Table.Cell>
-                  <Table.Cell px={4} py={3}><Text fontSize="sm" color="blue.400">{u.trust_score.toFixed(2)}</Text></Table.Cell>
                   <Table.Cell px={4} py={3}><Badge colorPalette="green" size="sm">Active</Badge></Table.Cell>
                   <Table.Cell px={4} py={3}><Text fontSize="xs" color="fg.muted">{new Date(u.created_at).toLocaleDateString()}</Text></Table.Cell>
                   <Table.Cell px={4} py={3}>
@@ -498,7 +494,7 @@ export default function ManageAnnotatorsPage() {
               ))}
               {active.length === 0 && (
                 <Table.Row>
-                  <Table.Cell colSpan={6} px={4} py={8} textAlign="center">
+                  <Table.Cell colSpan={4} px={4} py={8} textAlign="center">
                     <Text color="fg.muted">No active annotators.</Text>
                   </Table.Cell>
                 </Table.Row>
@@ -528,8 +524,6 @@ export default function ManageAnnotatorsPage() {
                   {disabled.map((u) => (
                     <Table.Row key={u.id} _hover={{ bg: "bg.muted" }}>
                       <Table.Cell px={4} py={3}><Text fontSize="sm" color="fg.muted">{u.username}</Text></Table.Cell>
-                      <Table.Cell px={4} py={3}><Text fontSize="sm" color="fg.muted">{u.segments_reviewed}</Text></Table.Cell>
-                      <Table.Cell px={4} py={3}><Text fontSize="sm" color="fg.muted">{u.trust_score.toFixed(2)}</Text></Table.Cell>
                       <Table.Cell px={4} py={3}><Badge colorPalette="red" size="sm">Disabled</Badge></Table.Cell>
                       <Table.Cell px={4} py={3}><Text fontSize="xs" color="fg.muted">{new Date(u.created_at).toLocaleDateString()}</Text></Table.Cell>
                       <Table.Cell px={4} py={3}>

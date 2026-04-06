@@ -7,7 +7,6 @@ export interface AuthUser {
   id: number;
   username: string;
   role: "admin" | "annotator";
-  trust_score: number;
   is_active: boolean;
 }
 

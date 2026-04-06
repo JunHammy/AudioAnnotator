@@ -63,8 +63,6 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: str
-    trust_score: float
-    segments_reviewed: int
     is_active: bool
     created_at: datetime
 

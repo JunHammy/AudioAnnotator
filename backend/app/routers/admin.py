@@ -193,7 +193,6 @@ async def get_dashboard(
         select(
             User.id,
             User.username,
-            User.trust_score,
             User.is_active,
             User.created_at,
             func.count(Assignment.id).label("assigned"),
@@ -248,7 +247,6 @@ async def get_dashboard(
             {
                 "id": r.id,
                 "username": r.username,
-                "trust_score": round(r.trust_score, 2),
                 "is_active": r.is_active,
                 "assigned": r.assigned or 0,
                 "completed": int(r.completed or 0),
