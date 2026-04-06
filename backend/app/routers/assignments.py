@@ -84,6 +84,17 @@ async def create_assignment(
     )
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="Assignment already exists")
+
+    if body.task_type == "emotion":
+        af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
+        if not af:
+            raise HTTPException(status_code=404, detail="Audio file not found")
+        if not af.collaborative_locked_speaker:
+            raise HTTPException(
+                status_code=400,
+                detail="Speaker annotation must be finalized (locked) before assigning emotion tasks.",
+            )
+
     assignment = Assignment(**body.model_dump())
     db.add(assignment)
     await db.flush()

@@ -1737,6 +1737,7 @@ function AnnotateInner() {
           e.preventDefault()
           const d = dataRef.current
           if (!d || !d.assignments.some(a => a.task_type === "emotion")) break
+          if (d.audio_file.emotion_gated) break
           const unfinished = d.emotion_segments.find(seg => !seg.emotion?.length)
           if (unfinished) setSelection({ type: "emotion", segment: unfinished })
           break
@@ -1753,7 +1754,9 @@ function AnnotateInner() {
         default:
           if (/^[1-8]$/.test(e.key) && e.key !== "") {
             e.preventDefault()
-            editorRef.current?.setEmotion(EMOTIONS[parseInt(e.key, 10) - 1])
+            if (!dataRef.current?.audio_file.emotion_gated) {
+              editorRef.current?.setEmotion(EMOTIONS[parseInt(e.key, 10) - 1])
+            }
           }
       }
     }

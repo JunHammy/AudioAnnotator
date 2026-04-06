@@ -647,6 +647,7 @@ async def toggle_task_lock(
         raise HTTPException(status_code=404, detail="Audio file not found")
 
     setattr(af, f"collaborative_locked_{body.task_type}", body.locked)
+    completed_assignments: list[Assignment] = []
     if body.locked:
         af.locked_by = admin.id
         af.locked_at = datetime.now(timezone.utc)
@@ -661,6 +662,19 @@ async def toggle_task_lock(
             af.locked_by = None
             af.locked_at = None
 
+        # Reopen all completed assignments for this task type so annotators
+        # can edit again. Without this the task shows "completed" but is editable,
+        # which is incoherent.
+        completed_assignments = (await db.execute(
+            select(Assignment)
+            .where(Assignment.audio_file_id == file_id)
+            .where(Assignment.task_type == body.task_type)
+            .where(Assignment.status == "completed")
+        )).scalars().all()
+        for a in completed_assignments:
+            a.status = "in_progress"
+            a.completed_at = None
+
     await db.flush()
     await db.refresh(af)
 
@@ -673,5 +687,13 @@ async def toggle_task_lock(
             "locked_emotion": af.collaborative_locked_emotion,
         },
     })
+
+    # Notify each affected annotator so their My Tasks updates live
+    if not body.locked and completed_assignments:
+        for a in completed_assignments:
+            await sse_manager.broadcast_user(a.annotator_id, {
+                "type": "assignment_created",
+                "data": {"audio_file_id": file_id, "task_type": body.task_type},
+            })
 
     return af
