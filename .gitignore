@@ -57,6 +57,10 @@ frontend/.vercel/
 .env
 .env.local
 .env.*.local
+backend/.env.prod
+
+# Docker local overrides
+docker-compose.override.yml
 
 # OS
 .DS_Store

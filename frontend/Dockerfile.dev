@@ -1,0 +1,11 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install deps only — source is mounted via volume at runtime
+COPY package*.json ./
+RUN npm install --legacy-peer-deps
+
+EXPOSE 3000
+
+CMD ["npm", "run", "dev"]
