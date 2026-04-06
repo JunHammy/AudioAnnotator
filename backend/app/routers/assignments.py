@@ -22,6 +22,34 @@ from app.services.sse import sse_manager
 router = APIRouter()
 
 
+_LOCK_COL = {
+    "speaker": "collaborative_locked_speaker",
+    "gender": "collaborative_locked_gender",
+    "transcription": "collaborative_locked_transcription",
+    "emotion": "collaborative_locked_emotion",
+}
+
+
+async def _unlock_if_locked(db: AsyncSession, audio_file_id: int, task_types: list[str]) -> list[str]:
+    """
+    If a task type is currently locked on the file, reset it to False.
+    Returns the list of task types that were unlocked (for SSE broadcast).
+    Called when admin adds a new assignment for an already-locked task type.
+    """
+    af = (await db.execute(select(AudioFile).where(AudioFile.id == audio_file_id))).scalar_one_or_none()
+    if not af:
+        return []
+    unlocked = []
+    for tt in task_types:
+        col = _LOCK_COL.get(tt)
+        if col and getattr(af, col, False):
+            setattr(af, col, False)
+            unlocked.append(tt)
+    if unlocked:
+        await db.flush()
+    return unlocked
+
+
 @router.get("", response_model=list[AssignmentResponse])
 async def list_assignments(
     audio_file_id: Optional[int] = None,
@@ -60,6 +88,11 @@ async def create_assignment(
     db.add(assignment)
     await db.flush()
     await db.refresh(assignment)
+
+    # If the task was already locked (prior annotators all completed), reset the lock
+    # so the new annotator can actually edit.
+    unlocked = await _unlock_if_locked(db, body.audio_file_id, [body.task_type])
+
     await write_audit_log(db, _admin.id, "assign_task", "assignment", assignment.id,
                           {"audio_file_id": body.audio_file_id, "annotator_id": body.annotator_id,
                            "task_type": body.task_type})
@@ -77,6 +110,18 @@ async def create_assignment(
         "type": "assignment_created",
         "data": {"audio_file_id": body.audio_file_id, "task_type": body.task_type},
     })
+    if unlocked:
+        af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
+        if af:
+            await sse_manager.broadcast(body.audio_file_id, {
+                "type": "lock_changed",
+                "data": {
+                    "locked_speaker": af.collaborative_locked_speaker,
+                    "locked_gender": af.collaborative_locked_gender,
+                    "locked_transcription": af.collaborative_locked_transcription,
+                    "locked_emotion": af.collaborative_locked_emotion,
+                },
+            })
     return assignment
 
 
@@ -129,6 +174,10 @@ async def create_assignment_batch(
         await db.flush()
         for a in created:
             await db.refresh(a)
+
+        # Reset any locks that were set before this new annotator was added
+        unlocked = await _unlock_if_locked(db, body.audio_file_id, [a.task_type for a in created])
+
         await write_audit_log(db, _admin.id, "assign_task_batch", "audio_file", body.audio_file_id,
                               {"annotator_id": body.annotator_id, "task_types": body.task_types})
 
@@ -151,6 +200,18 @@ async def create_assignment_batch(
                 "task_types": [a.task_type for a in created],
             },
         })
+        if unlocked:
+            af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
+            if af:
+                await sse_manager.broadcast(body.audio_file_id, {
+                    "type": "lock_changed",
+                    "data": {
+                        "locked_speaker": af.collaborative_locked_speaker,
+                        "locked_gender": af.collaborative_locked_gender,
+                        "locked_transcription": af.collaborative_locked_transcription,
+                        "locked_emotion": af.collaborative_locked_emotion,
+                    },
+                })
 
     return created
 
