@@ -274,7 +274,7 @@ async def create_speaker_segment(
 @router.delete("/speaker/by-label", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_speaker_by_label(
     file_id: int,
-    speaker_label: str,
+    speaker_label: str = "",
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -290,10 +290,16 @@ async def delete_speaker_by_label(
     if not assignment and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="You do not have a speaker assignment for this file.")
 
+    # Empty string means the "Unknown" lane — match NULL speaker_label in DB
+    label_filter = (
+        SpeakerSegment.speaker_label.is_(None)
+        if speaker_label == ""
+        else SpeakerSegment.speaker_label == speaker_label
+    )
     segments = (await db.execute(
         select(SpeakerSegment)
         .where(SpeakerSegment.audio_file_id == file_id)
-        .where(SpeakerSegment.speaker_label == speaker_label)
+        .where(label_filter)
     )).scalars().all()
 
     deleted_spk_ids: list[int] = []

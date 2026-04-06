@@ -362,6 +362,12 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
     selection.type === "speaker"
       ? (lockedSpeaker && (!canEditGender || lockedGender))
       : locked  // transcription / emotion use the simple lock prop
+
+  // isDeleteDisabled: deletion is a structural operation — blocked by speaker lock only.
+  // Kept separate from isSaveDisabled so a gender-only lock never blocks deletion.
+  const isDeleteDisabled =
+    selection.type === "speaker" ? lockedSpeaker
+    : locked
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -944,9 +950,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
             size="sm"
             colorPalette="red"
             variant="outline"
-            disabled={isSaveDisabled}
+            disabled={isDeleteDisabled}
             onClick={handleDelete}
-            title={isSaveDisabled ? "This task is locked — no further changes allowed" : undefined}
+            title={isDeleteDisabled ? "Speaker track is locked — ask admin to unlock before deleting" : undefined}
           >
             <Trash2 size={14} />
             Delete Segment
