@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Box, Button, Center, Field, Heading, Input, Spinner, Stack } from "@chakra-ui/react";
+import { Box, Button, Center, Field, Heading, Input, Stack } from "@chakra-ui/react";
 import { useAuth } from "@/hooks/useAuth";
 import ToastWizard from "@/lib/toastWizard";
 
@@ -33,10 +33,11 @@ export default function LoginPage() {
     try {
       const me = await login(username, password);
       justLoggedIn.current = true; // suppress the useEffect redirect/toast
-      ToastWizard.standard("success", "Welcome back!", `Logged in as ${me.username}.`, 3000, true);
-      window.location.href = me.role === "admin" ? "/admin" : "/annotator";
+      ToastWizard.standard("success", "Welcome back!", `Logged in as ${me.username}.`, 2000, true);
+      const dest = me.role === "admin" ? "/admin" : "/annotator";
+      setTimeout(() => { window.location.href = dest; }, 1800);
     } catch {
-      ToastWizard.standard("error", "Login failed", "Invalid username or password.", 5000, true);
+      ToastWizard.standard("error", "Login failed", "Invalid username or password.", 6000, true);
     } finally {
       setLoading(false);
     }
