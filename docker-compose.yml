@@ -7,7 +7,6 @@ services:
       - ./backend/.env.prod
     volumes:
       - app_data:/data
-      - ./config:/config:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/api/health || exit 1"]

@@ -193,6 +193,14 @@ class AuditLog(Base):
     user = relationship("User")
 
 
+class AppConfig(Base):
+    __tablename__ = "app_config"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 

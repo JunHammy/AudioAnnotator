@@ -28,13 +28,13 @@ import io
 import json
 import re
 import zipfile
-from pathlib import Path
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import (
+    AppConfig,
     AudioFile,
     Dataset,
     SpeakerSegment,
@@ -48,15 +48,16 @@ from app.models.models import (
 
 _SAFE_NAME_RE = re.compile(r"[^\w\-.]")
 
-_BRACKET_WORDS_PATH = (
-    Path(__file__).parent.parent.parent.parent / "config" / "bracket_words.json"
-)
+_BRACKET_WORDS_KEY = "bracket_words"
 
 
-def _load_bracket_words() -> tuple[list[str], list[str]]:
-    if not _BRACKET_WORDS_PATH.is_file():
+async def _load_bracket_words(db: AsyncSession) -> tuple[list[str], list[str]]:
+    row = (await db.execute(
+        select(AppConfig).where(AppConfig.key == _BRACKET_WORDS_KEY)
+    )).scalar_one_or_none()
+    if row is None:
         return [], []
-    data = json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+    data = row.value
     return data.get("parentheses", []), data.get("square_brackets", [])
 
 
@@ -172,7 +173,7 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
         tr_by_key[key] = ts
 
     # --- 5. Assemble segments ----------------------------------------------
-    parentheses, square_brackets = _load_bracket_words()
+    parentheses, square_brackets = await _load_bracket_words(db)
 
     segments_out = []
     for seg in baseline_segs:

@@ -12,7 +12,6 @@ services:
     volumes:
       - ./backend:/app          # live source reload
       - app_data:/data           # persistent DB + uploads
-      - ./config:/config:ro      # bracket_words.json
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     ports:
       - "8000:8000"              # expose for direct API testing

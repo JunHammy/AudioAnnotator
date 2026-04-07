@@ -7,43 +7,69 @@ from sqlalchemy import func, distinct, select, case
 
 from app.auth.dependencies import require_admin
 from app.database import get_db
-from app.models.models import Assignment, AudioFile, AuditLog, Dataset, SpeakerSegment, User
+from app.models.models import AppConfig, Assignment, AudioFile, AuditLog, Dataset, SpeakerSegment, User
 from app.schemas.schemas import BracketWordsUpdate
 
-# config/bracket_words.json is at repo root (4 levels up from this file)
-_BRACKET_WORDS_PATH = (
+# Legacy file path — used once for auto-migration if the DB row doesn't exist yet
+_LEGACY_BRACKET_WORDS_PATH = (
     Path(__file__).parent.parent.parent.parent / "config" / "bracket_words.json"
 )
+_BRACKET_WORDS_KEY = "bracket_words"
 
 router = APIRouter()
 
 
 # ─── Bracket Words ────────────────────────────────────────────────────────────
 
+async def _get_bracket_words_data(db: AsyncSession) -> dict:
+    """Load bracket words from DB. Auto-migrates from legacy file on first call."""
+    row = (await db.execute(
+        select(AppConfig).where(AppConfig.key == _BRACKET_WORDS_KEY)
+    )).scalar_one_or_none()
+
+    if row is None:
+        # First time — seed from legacy file if it exists, otherwise empty
+        if _LEGACY_BRACKET_WORDS_PATH.is_file():
+            data = json.loads(_LEGACY_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+        else:
+            data = {"parentheses": [], "square_brackets": []}
+        db.add(AppConfig(key=_BRACKET_WORDS_KEY, value=data))
+        await db.flush()
+        return data
+
+    return row.value
+
+
 @router.get("/bracket-words")
-async def get_bracket_words(_admin: User = Depends(require_admin)):
-    if not _BRACKET_WORDS_PATH.is_file():
-        return {"parentheses": [], "square_brackets": []}
-    return json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
+async def get_bracket_words(
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+):
+    return await _get_bracket_words_data(db)
 
 
 @router.patch("/bracket-words")
 async def update_bracket_words(
     body: BracketWordsUpdate,
+    db: AsyncSession = Depends(get_db),
     _admin: User = Depends(require_admin),
 ):
-    if _BRACKET_WORDS_PATH.is_file():
-        data = json.loads(_BRACKET_WORDS_PATH.read_text(encoding="utf-8"))
-    else:
-        data = {"parentheses": [], "square_brackets": []}
+    data = await _get_bracket_words_data(db)
 
     if body.parentheses is not None:
-        # Normalise: strip whitespace, deduplicate, lowercase
         data["parentheses"] = sorted({w.strip().lower() for w in body.parentheses if w.strip()})
     if body.square_brackets is not None:
         data["square_brackets"] = sorted({w.strip().lower() for w in body.square_brackets if w.strip()})
 
-    _BRACKET_WORDS_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    row = (await db.execute(
+        select(AppConfig).where(AppConfig.key == _BRACKET_WORDS_KEY)
+    )).scalar_one_or_none()
+    if row:
+        row.value = data
+    else:
+        db.add(AppConfig(key=_BRACKET_WORDS_KEY, value=data))
+
+    await db.flush()
     return data
 
 
