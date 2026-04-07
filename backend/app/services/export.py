@@ -14,7 +14,7 @@ JSON structure per file:
         "segment_id", "start_time", "end_time", "speaker_label", "gender",
         "transcription": { "original_text", "edited_text", "notes" } | null,
         "emotion": {
-          "<annotator_username>": ["Happy", "Other:Excited"],
+          "<annotator_username>": { "tags": ["Happy", "Other:Excited"], "notes": "..." },
           ...
         } | null
       }
@@ -151,11 +151,14 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
             SpeakerSegment.source == "annotator",
         )
     )
-    # { "start-end" key → { username: [emotion tags] } }
-    annotator_emotions: dict[str, dict[str, list]] = {}
+    # { "start-end" key → { username: { "tags": [...], "notes": ... } } }
+    annotator_emotions: dict[str, dict[str, dict]] = {}
     for seg, username in ann_result.all():
         key = f"{seg.start_time:.3f}-{seg.end_time:.3f}"
-        annotator_emotions.setdefault(key, {})[username] = seg.emotion or []
+        annotator_emotions.setdefault(key, {})[username] = {
+            "tags": seg.emotion or [],
+            "notes": seg.notes,
+        }
 
     # --- 4. Transcription segments -----------------------------------------
     tr_result = await db.execute(
@@ -186,12 +189,15 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
                 "notes": tr.notes,
             }
 
-        # Format Other:Xxx emotion tags as Other: (Xxx)
+        # Format Other:Xxx emotion tags as Other: (Xxx); include per-annotator notes
         emotions = None
         if raw_emotions:
             emotions = {
-                username: [_format_emotion_tag(t) for t in tags]
-                for username, tags in raw_emotions.items()
+                username: {
+                    "tags": [_format_emotion_tag(t) for t in ann["tags"]],
+                    "notes": ann["notes"],
+                }
+                for username, ann in raw_emotions.items()
             }
 
         segments_out.append({
@@ -200,14 +206,18 @@ async def build_file_export(db: AsyncSession, file_id: int) -> dict:
             "end_time": seg.end_time,
             "speaker_label": seg.speaker_label,
             "gender": seg.gender,
+            "notes": seg.notes,
             "transcription": transcription,
             "emotion": emotions,
         })
 
+    # Compute num_speakers from actual annotated labels, not the upload-time static field
+    num_speakers = len({seg.speaker_label for seg in baseline_segs if seg.speaker_label})
+
     file_data = {
         "language": af.language,
         "duration": af.duration,
-        "num_speakers": af.num_speakers,
+        "num_speakers": num_speakers or af.num_speakers,
         "dataset": dataset_name,
         "collaborative_locked": {
             "speaker": af.collaborative_locked_speaker,
@@ -236,7 +246,7 @@ _CSV_SEGMENT_HEADERS = [
 _CSV_VOTES_HEADERS = [
     "filename",
     "segment_id", "start_time", "end_time", "speaker_label",
-    "annotator_username", "emotions",
+    "annotator_username", "emotions", "emotion_notes",
 ]
 
 
@@ -278,7 +288,9 @@ def export_data_to_csv(files_data: list[dict]) -> tuple[bytes, bytes]:
             ])
 
             emotion = s["emotion"] or {}
-            for username, tags in emotion.items():
+            for username, ann in emotion.items():
+                tags = ann["tags"] if isinstance(ann, dict) else ann
+                enotes = ann.get("notes") if isinstance(ann, dict) else None
                 vote_rows.append([
                     fname,
                     s["segment_id"],
@@ -286,6 +298,7 @@ def export_data_to_csv(files_data: list[dict]) -> tuple[bytes, bytes]:
                     s["speaker_label"] or "",
                     username,
                     "|".join(tags),  # pipe-separated list, e.g. "Happy|Other:Excited"
+                    enotes or "",
                 ])
 
     return (

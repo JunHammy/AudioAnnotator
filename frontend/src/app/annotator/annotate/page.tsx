@@ -356,18 +356,6 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
   lockedGender = false,
   locked = false,
 }, ref) {
-  // isSaveDisabled: each track type has its own independent lock.
-  // For speaker-type: disabled only when BOTH speaker AND gender are unavailable.
-  const isSaveDisabled =
-    selection.type === "speaker"
-      ? (lockedSpeaker && (!canEditGender || lockedGender))
-      : locked  // transcription / emotion use the simple lock prop
-
-  // isDeleteDisabled: deletion is a structural operation — blocked by speaker lock only.
-  // Kept separate from isSaveDisabled so a gender-only lock never blocks deletion.
-  const isDeleteDisabled =
-    selection.type === "speaker" ? lockedSpeaker
-    : locked
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -390,6 +378,20 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
       ""
   )
   const [notes, setNotes] = useState<string>(selection.segment.notes ?? "")
+
+  // isSaveDisabled: each track type has its own independent lock.
+  // Notes are always saveable — bypass lock when notes is the only pending change.
+  const notesChanged = notes !== (selection.segment.notes ?? "")
+  const isSaveDisabled = (
+    selection.type === "speaker"
+      ? (lockedSpeaker && (!canEditGender || lockedGender))
+      : locked
+  ) && !notesChanged
+
+  // isDeleteDisabled: deletion is structural — blocked by speaker lock only.
+  const isDeleteDisabled =
+    selection.type === "speaker" ? lockedSpeaker : locked
+
   const [isAmbiguous, setIsAmbiguous] = useState<boolean>(
     (selection.segment as Segment).is_ambiguous ?? false
   )
