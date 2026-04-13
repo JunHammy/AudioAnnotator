@@ -2027,7 +2027,7 @@ function AnnotateInner() {
             {/* Color legend — single scrollable row so it never grows the sticky area */}
             <Box overflowX="auto" mt={2}>
               <HStack gap={4} flexWrap="nowrap" minW="max-content">
-                {(hasTask("speaker") || hasTask("gender") || hasTask("transcription")) && (() => {
+                {(hasTask("speaker") || hasTask("gender") || hasTask("transcription") || hasTask("emotion")) && (() => {
                   // Only show legend entries for speakers actually present in this file
                   const presentLabels = [...new Set(
                     data?.speaker_segments.map(s => s.speaker_label).filter(Boolean) as string[]
@@ -2106,7 +2106,7 @@ function AnnotateInner() {
                 const isOpen = openAccordions.has(key)
                 const speakerSegs = data.speaker_segments.filter(s => s.speaker_label === label)
                 const currentGender = getGenderForSpeaker(label ?? "") || "unk"
-                const trSegs = hasTask("transcription") ? (groupedTranscription.get(label) ?? []) : []
+                const trSegs = groupedTranscription.get(label) ?? []
                 return (
                   <Box key={key} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="md" overflow="hidden">
                     {/* Accordion header */}
@@ -2168,7 +2168,8 @@ function AnnotateInner() {
                     {/* Accordion body */}
                     {isOpen && (
                       <Box px={3} pb={3} pt={2} display="flex" flexDir="column" gap={2} borderTopWidth="1px" borderColor="border">
-                        {hasTask("speaker") && (
+                        {/* Speaker segments — visible to all; read-only when speaker is locked */}
+                        {speakerSegs.length > 0 && (
                           <SegmentTrack
                             label="Segments"
                             segments={speakerSegs}
@@ -2181,14 +2182,9 @@ function AnnotateInner() {
                             onSelect={s => setSelection({ type: "speaker", segment: s })}
                           />
                         )}
-                        {hasTask("transcription") && (() => {
-                          if (trSegs.length === 0) {
-                            return (
-                              <Text fontSize="xs" color="orange.400" fontStyle="italic" py={1}>
-                                ⚠ No transcription segments in this speaker's range.
-                              </Text>
-                            )
-                          }
+                        {/* Transcription segments — visible to all; editor locked when annotator lacks the task */}
+                        {(() => {
+                          if (trSegs.length === 0) return null
                           const spkBounds = new Set(speakerSegs.map(s => `${s.start_time.toFixed(3)}-${s.end_time.toFixed(3)}`))
                           const unlinked = trSegs.filter(t => !spkBounds.has(`${t.start_time.toFixed(3)}-${t.end_time.toFixed(3)}`)).length
                           return (
@@ -2299,7 +2295,7 @@ function AnnotateInner() {
             lockedSpeaker={data.audio_file.locked_speaker}
             lockedGender={data.audio_file.locked_gender}
             locked={
-              selection.type === "transcription" ? data.audio_file.locked_transcription
+              selection.type === "transcription" ? (data.audio_file.locked_transcription || !hasTask("transcription"))
               : selection.type === "emotion" ? data.audio_file.locked_emotion
               : false
             }
