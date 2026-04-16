@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override the local-dev paths from .env to use the Docker volume
+      - DATABASE_URL=sqlite+aiosqlite:////data/audioannotator.db
+      - UPLOAD_DIR=/data/uploads
+    volumes:
+      - ./backend:/app          # live source reload
+      - app_data:/data           # persistent DB + uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"              # expose for direct API testing
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app          # live source
+      - /app/node_modules        # keep container's node_modules, not host's
+      - /app/.next               # keep container's build cache
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  app_data:

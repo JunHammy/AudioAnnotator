@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+virt/
+.venv/
+audioannotator.db
+uploads/
+.pytest_cache/
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,43 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from app.config import settings
+from app.limiter import limiter
+from app.routers import admin, auth, users, audio_files, assignments, segments, review, datasets, export, notifications, events
+
+app = FastAPI(
+    title="AudioAnnotator API",
+    version="0.1.0",
+    docs_url="/docs" if settings.environment == "development" else None,
+    redoc_url=None,
+)
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+)
+
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(users.router, prefix="/api/users", tags=["users"])
+app.include_router(audio_files.router, prefix="/api/audio-files", tags=["audio-files"])
+app.include_router(assignments.router, prefix="/api/assignments", tags=["assignments"])
+app.include_router(segments.router, prefix="/api/segments", tags=["segments"])
+app.include_router(review.router, prefix="/api/review", tags=["review"])
+app.include_router(datasets.router, prefix="/api/datasets", tags=["datasets"])
+app.include_router(export.router, prefix="/api/export", tags=["export"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
+app.include_router(events.router, prefix="/api", tags=["events"])
+
+
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok"}
