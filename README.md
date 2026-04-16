@@ -29,62 +29,68 @@ A web-based audio annotation platform. Annotators label speech segments with spe
 ### 1. Clone the repo
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/JunHammy/AudioAnnotator.git
 cd AudioAnnotator
 ```
 
 ### 2. Backend
 
 ```bash
-# Create and activate a virtual environment
+# Create and activate a virtual environment (run from repo root)
 python -m venv virt
 source virt/Scripts/activate      # Windows (Git Bash)
 # source virt/bin/activate         # macOS / Linux
 
-# Install dependencies
+# Move into the backend folder
 cd backend
+
+# Install dependencies
 pip install -r requirements.txt
 
-# Create the .env file
+# Create your .env file from the template
 cp .env.example .env
 ```
 
-Edit `backend/.env` — the defaults work for local development, but set a real `SECRET_KEY`:
+Open `backend/.env` and replace the `SECRET_KEY` placeholder with a real value:
 
 ```bash
-# Generate a secure key
+# Run this to generate one — copy the output into .env
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Paste the output as `SECRET_KEY=<value>` in `backend/.env`.
+Then finish the backend setup:
 
 ```bash
-# Run database migrations
+# Apply database migrations
 alembic upgrade head
 
-# Create the default admin account  (admin / admin123)
+# Create the default admin account
 python seed.py
 
-# Start the backend
+# Start the backend server
 uvicorn app.main:app --reload
 ```
 
-The API will be available at `http://127.0.0.1:8000`.  
-Interactive API docs: `http://127.0.0.1:8000/docs`
+Backend is running at `http://127.0.0.1:8000` — leave this terminal open.
 
-> **Windows note:** If Docker Desktop is installed, it occupies port 8000 on IPv6.  
-> Always use `http://127.0.0.1:8000` (not `localhost:8000`) to reach the backend.
+> **Windows note:** If Docker Desktop is installed, always use `http://127.0.0.1:8000`, not `http://localhost:8000`.
 
 ---
 
 ### 3. Frontend
 
+Open a **new terminal** at the repo root, then:
+
 ```bash
+# Activate the venv again in the new terminal
+source virt/Scripts/activate      # Windows (Git Bash)
+# source virt/bin/activate         # macOS / Linux
+
+# Move into the frontend folder
 cd frontend
 
-# Create the .env.local file
+# Create your .env.local file from the template
 cp .env.example .env.local
-# The default value (127.0.0.1:8000) works for local dev — edit if needed
 
 # Install dependencies
 npm install --legacy-peer-deps
@@ -99,7 +105,7 @@ Log in with the default admin account:
 - **Username:** `admin`
 - **Password:** `admin123`
 
-> Change this password immediately after first login via Admin → Accounts → Reset PW.
+> Change this password after first login via Admin → Accounts → Reset PW.
 
 ---
 
