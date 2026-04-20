@@ -415,7 +415,9 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
       if (type === "emotion") {
         res = await api.patch(`/api/segments/speaker/${segment.id}`, {
           emotion: (() => {
-            const cleaned = emotions.filter(e => e !== "Other:" && !(e.startsWith("Other:") && e.slice(6).trim() === ""))
+            const cleaned = emotions
+              .filter(e => e !== "Other:" && !(e.startsWith("Other:") && e.slice(6).trim() === ""))
+              .map(e => e.startsWith("Other:") ? `Other:${e.slice(6).trim().replace(/^./, c => c.toUpperCase())}` : e)
             return cleaned.length > 0 ? cleaned : null
           })(),
           is_ambiguous: isAmbiguous,
