@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Badge,
@@ -344,7 +345,7 @@ function LangInput({ value, onChange, disabled }: { value: string; onChange: (v:
         {LANGUAGE_PRESETS.map(l => (
           <Box
             key={l}
-            as="button"
+            as={"button" as React.ElementType}
             type="button"
             px={2} py={0.5}
             fontSize="xs"
