@@ -346,7 +346,6 @@ function LangInput({ value, onChange, disabled }: { value: string; onChange: (v:
           <Box
             key={l}
             as={"button" as React.ElementType}
-            type="button"
             px={2} py={0.5}
             fontSize="xs"
             rounded="full"
