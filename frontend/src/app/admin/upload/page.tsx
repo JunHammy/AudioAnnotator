@@ -2,6 +2,11 @@
 
 import React from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+function generateId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 import {
   Badge,
   Box,
@@ -420,7 +425,7 @@ export default function UploadFilesPage() {
   function addFiles(files: File[]) {
     const newItems: QueueItem[] = files
       .filter(f => ["wav", "mp3", "json"].includes(f.name.split(".").pop()?.toLowerCase() ?? ""))
-      .map(f => ({ id: crypto.randomUUID(), file: f, fileType: detectFileType(f.name).type, status: "ready" as UploadStatus }));
+      .map(f => ({ id: generateId(), file: f, fileType: detectFileType(f.name).type, status: "ready" as UploadStatus }));
     setQueue(prev => {
       const existingAudio = new Set(prev.filter(i => i.fileType === "audio").map(i => i.file.name));
       return [...prev, ...newItems.filter(i => i.fileType !== "audio" || !existingAudio.has(i.file.name))];
