@@ -512,12 +512,14 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
 
   return (
     <Box
-      w="300px"
+      w={{ base: "full", md: "300px" }}
       flexShrink={0}
-      borderLeftWidth="1px"
+      borderLeftWidth={{ base: "0", md: "1px" }}
+      borderTopWidth={{ base: "1px", md: "0" }}
       borderColor="border"
       p={4}
       overflowY="auto"
+      maxH={{ base: "45vh", md: "none" }}
     >
       <HStack justify="space-between" mb={3}>
         <Heading size="xs" color="fg">
@@ -1826,7 +1828,7 @@ function AnnotateInner() {
 
   if (!fileId) {
     return (
-      <Box p={8} textAlign="center" color="fg.muted">
+      <Box p={{ base: 4, md: 8 }} textAlign="center" color="fg.muted">
         <Text>No file selected. Go back and select a task.</Text>
       </Box>
     )
@@ -1834,7 +1836,7 @@ function AnnotateInner() {
 
   if (!data) {
     return (
-      <Box p={8} display="flex" justifyContent="center">
+      <Box p={{ base: 4, md: 8 }} display="flex" justifyContent="center">
         <Spinner />
       </Box>
     )
@@ -2001,7 +2003,7 @@ function AnnotateInner() {
       </Box>
 
       {/* Main body */}
-      <Box flex={1} display="flex" overflow="hidden">
+      <Box flex={1} display="flex" flexDir={{ base: "column", md: "row" }} overflow="hidden">
         <Box flex={1} display="flex" flexDir="column" overflow="hidden">
 
           {/* ── Sticky top: waveform + time ruler + color legend ── */}

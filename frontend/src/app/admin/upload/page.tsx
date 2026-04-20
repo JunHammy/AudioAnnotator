@@ -628,7 +628,7 @@ export default function UploadFilesPage() {
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
-    <Box p={8} maxW="1100px">
+    <Box p={{ base: 4, md: 8 }} maxW="1100px">
       <Heading size="lg" color="fg" mb={1}>Upload Files</Heading>
       <Text color="fg.muted" mb={6}>
         Use the <Text as="span" fontWeight="semibold" color="fg">Files</Text> tab for individual files.
@@ -647,7 +647,7 @@ export default function UploadFilesPage() {
 
         {/* ── FILES TAB ────────────────────────────────────────────── */}
         <Tabs.Content value="files">
-          <Grid templateColumns="1fr 280px" gap={6} mb={5}>
+          <Grid templateColumns={{ base: "1fr", md: "1fr 280px" }} gap={6} mb={5}>
             <Box>
               <DropZone onFiles={addFiles} />
               <Box bg="yellow.900" borderWidth="1px" borderColor="yellow.700" rounded="md" px={4} py={3} mt={3} fontSize="xs" color="yellow.200">

@@ -49,12 +49,13 @@ export default function LoginPage() {
     <Center minH="100vh" bg="bg">
       <Box
         bg="bg.subtle"
-        p={8}
+        p={{ base: 5, md: 8 }}
         rounded="lg"
         borderWidth="1px"
         borderColor="border"
         w="full"
         maxW="400px"
+        mx={{ base: 4, md: 0 }}
       >
         <Stack gap={6} as="form" onSubmit={handleSubmit}>
           <Heading size="lg" textAlign="center" color="fg">

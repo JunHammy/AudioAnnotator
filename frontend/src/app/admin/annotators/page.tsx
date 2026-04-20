@@ -450,8 +450,8 @@ export default function ManageAnnotatorsPage() {
   const disabled = users.filter((u) => u.role === "annotator" && !u.is_active);
 
   return (
-    <Box p={8} maxW="1100px">
-      <Flex justify="space-between" align="center" mb={6}>
+    <Box p={{ base: 4, md: 8 }} maxW="1100px">
+      <Flex justify="space-between" align="center" mb={6} flexWrap="wrap" gap={3}>
         <Box>
           <Heading size="lg" color="fg" mb={1}>Manage Accounts</Heading>
           <Text color="fg.muted">Create and manage annotator and admin accounts</Text>
@@ -467,6 +467,7 @@ export default function ManageAnnotatorsPage() {
         {loading ? (
           <Box px={5} py={8} textAlign="center"><Text color="fg.muted">Loading…</Text></Box>
         ) : (
+          <Box overflowX="auto">
           <Table.Root size="sm">
             <Table.Header>
               <Table.Row>
@@ -501,6 +502,7 @@ export default function ManageAnnotatorsPage() {
               )}
             </Table.Body>
           </Table.Root>
+          </Box>
         )}
       </Box>
 
@@ -519,6 +521,7 @@ export default function ManageAnnotatorsPage() {
           </Collapsible.Trigger>
           <Collapsible.Content>
             <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mt={2} opacity={0.75}>
+              <Box overflowX="auto">
               <Table.Root size="sm">
                 <Table.Body>
                   {disabled.map((u) => (
@@ -539,6 +542,7 @@ export default function ManageAnnotatorsPage() {
                   ))}
                 </Table.Body>
               </Table.Root>
+              </Box>
             </Box>
           </Collapsible.Content>
         </Collapsible.Root>
@@ -560,6 +564,7 @@ export default function ManageAnnotatorsPage() {
           </Collapsible.Trigger>
           <Collapsible.Content>
             <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mt={2}>
+              <Box overflowX="auto">
               <Table.Root size="sm">
                 <Table.Header>
                   <Table.Row>
@@ -599,6 +604,7 @@ export default function ManageAnnotatorsPage() {
                   ))}
                 </Table.Body>
               </Table.Root>
+              </Box>
             </Box>
           </Collapsible.Content>
         </Collapsible.Root>

@@ -161,12 +161,12 @@ export default function AnnotatorTasksPage() {
   const FILTERS = ["all", "pending", "in_progress", "completed"] as const;
 
   return (
-    <Box p={8} maxW="1000px" h="100%" overflowY="auto">
+    <Box p={{ base: 4, md: 8 }} maxW="1000px" h="100%" overflowY="auto">
       <Heading size="lg" color="fg" mb={1}>My Tasks</Heading>
       <Text color="fg.muted" mb={6}>Welcome back, {user?.username}</Text>
 
       {/* Stat cards */}
-      <Grid templateColumns="repeat(4, 1fr)" gap={4} mb={8}>
+      <Grid templateColumns={{ base: "repeat(2, 1fr)", md: "repeat(4, 1fr)" }} gap={4} mb={8}>
         <StatCard label="Assigned"    value={stats.assigned}    color="fg" />
         <StatCard label="In Progress" value={stats.in_progress} color="orange.400" />
         <StatCard label="Completed"   value={stats.completed}   color="green.400" />
@@ -191,8 +191,8 @@ export default function AnnotatorTasksPage() {
           placeholder="Search by filename…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          maxW="220px"
-          ml="auto"
+          maxW={{ base: "full", sm: "220px" }}
+          ml={{ base: 0, sm: "auto" }}
           bg="bg.subtle"
           borderColor="border"
           color="fg"
@@ -204,6 +204,7 @@ export default function AnnotatorTasksPage() {
         {loading ? (
           <Box px={5} py={8} textAlign="center"><Text color="fg.muted">Loading…</Text></Box>
         ) : (
+          <Box overflowX="auto">
           <Table.Root size="sm">
             <Table.Header>
               <Table.Row>
@@ -301,6 +302,7 @@ export default function AnnotatorTasksPage() {
               )}
             </Table.Body>
           </Table.Root>
+          </Box>
         )}
       </Box>
     </Box>

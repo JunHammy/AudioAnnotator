@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Box, Flex, Text, VStack } from "@chakra-ui/react";
+import { Box, Flex, Text, VStack, useBreakpointValue } from "@chakra-ui/react";
 import {
   BarChart2,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
+  X,
   Database,
   LogOut,
   Mic2,
@@ -47,7 +48,15 @@ const ANNOTATOR_NAV: NavItem[] = [
 
 const STORAGE_KEY = "sidebar-collapsed";
 
-export function Sidebar({ role }: { role: "admin" | "annotator" }) {
+export function Sidebar({
+  role,
+  mobileOpen = false,
+  onMobileClose,
+}: {
+  role: "admin" | "annotator";
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -74,10 +83,27 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
     router.replace("/login");
   }
 
+  const isMobile = useBreakpointValue({ base: true, md: false });
+
+  // On mobile the drawer always opens fully expanded regardless of saved collapsed state
+  const effectiveCollapsed = isMobile ? false : collapsed;
+
   const nav = role === "admin" ? ADMIN_NAV : ANNOTATOR_NAV;
-  const w = collapsed ? "60px" : "240px";
+  const w = effectiveCollapsed ? "60px" : "240px";
 
   return (
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <Box
+          display={{ md: "none" }}
+          position="fixed"
+          inset={0}
+          bg="rgba(0,0,0,0.65)"
+          zIndex={49}
+          onClick={onMobileClose}
+        />
+      )}
     <Flex
       direction="column"
       w={w}
@@ -90,19 +116,24 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
       borderColor="border"
       flexShrink={0}
       transition="width 0.2s ease, min-width 0.2s ease"
+      display={{ base: mobileOpen ? "flex" : "none", md: "flex" }}
+      position={{ base: "fixed", md: "relative" }}
+      zIndex={{ base: 50, md: 1 }}
+      top={0}
+      left={0}
     >
       {/* Logo / App name + collapse toggle */}
       <Flex
         align="center"
-        justify={collapsed ? "center" : "space-between"}
-        px={collapsed ? 0 : 4}
+        justify={effectiveCollapsed ? "center" : "space-between"}
+        px={effectiveCollapsed ? 0 : 4}
         py={4}
         borderBottomWidth="1px"
         borderColor="border"
         overflow="hidden"
         flexShrink={0}
       >
-        {!collapsed && (
+        {!effectiveCollapsed && (
           <Box>
             <Text fontWeight="bold" fontSize="md" color="fg" letterSpacing="tight" whiteSpace="nowrap">
               AudioAnnotator
@@ -124,17 +155,17 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
           flexShrink={0}
           _hover={{ bg: "bg.muted", color: "fg" }}
           transition="all 0.15s"
-          onClick={toggleCollapsed}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={isMobile ? onMobileClose : toggleCollapsed}
+          title={isMobile ? "Close menu" : collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          {isMobile ? <X size={16} /> : collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
         </Flex>
       </Flex>
 
       {/* Nav items */}
-      <VStack gap={1} align="stretch" px={collapsed ? "6px" : 3} py={4} flex={1}>
+      <VStack gap={1} align="stretch" px={effectiveCollapsed ? "6px" : 3} py={4} flex={1}>
         {role === "annotator" && (
-          <NotificationBell collapsed={collapsed} />
+          <NotificationBell collapsed={effectiveCollapsed} />
         )}
         {nav.map((item) => {
           const isActive =
@@ -143,12 +174,12 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
               : pathname.startsWith(item.href);
 
           return (
-            <Link key={item.href} href={item.href} style={{ textDecoration: "none" }}>
+            <Link key={item.href} href={item.href} style={{ textDecoration: "none" }} onClick={onMobileClose}>
               <Flex
                 align="center"
-                justify={collapsed ? "center" : "flex-start"}
-                gap={collapsed ? 0 : 3}
-                px={collapsed ? 0 : 3}
+                justify={effectiveCollapsed ? "center" : "flex-start"}
+                gap={effectiveCollapsed ? 0 : 3}
+                px={effectiveCollapsed ? 0 : 3}
                 py={2}
                 rounded="md"
                 fontSize="sm"
@@ -158,11 +189,11 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
                 _hover={{ bg: "bg.muted", color: "fg" }}
                 transition="all 0.15s"
                 cursor="pointer"
-                title={collapsed ? item.label : undefined}
+                title={effectiveCollapsed ? item.label : undefined}
                 overflow="hidden"
               >
                 <Box flexShrink={0}>{item.icon}</Box>
-                {!collapsed && (
+                {!effectiveCollapsed && (
                   <Text fontSize="sm" whiteSpace="nowrap" overflow="hidden" textOverflow="ellipsis">
                     {item.label}
                   </Text>
@@ -174,19 +205,19 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
       </VStack>
 
       {/* User + Logout */}
-      <Box px={collapsed ? "6px" : 3} py={4} borderTopWidth="1px" borderColor="border">
+      <Box px={effectiveCollapsed ? "6px" : 3} py={4} borderTopWidth="1px" borderColor="border">
         {/* Avatar / user card */}
         <Flex
           align="center"
-          justify={collapsed ? "center" : "flex-start"}
-          gap={collapsed ? 0 : 3}
-          px={collapsed ? 0 : 3}
+          justify={effectiveCollapsed ? "center" : "flex-start"}
+          gap={effectiveCollapsed ? 0 : 3}
+          px={effectiveCollapsed ? 0 : 3}
           py={2}
           mb={1}
           rounded="md"
           bg="bg.muted"
           overflow="hidden"
-          title={collapsed ? user?.username : undefined}
+          title={effectiveCollapsed ? user?.username : undefined}
         >
           <Box
             w="7"
@@ -203,7 +234,7 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
           >
             {user?.username?.[0]?.toUpperCase() ?? "?"}
           </Box>
-          {!collapsed && (
+          {!effectiveCollapsed && (
             <Box minW={0}>
               <Text fontSize="sm" fontWeight="medium" color="fg" truncate whiteSpace="nowrap">
                 {user?.username}
@@ -218,9 +249,9 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
         {/* Logout */}
         <Flex
           align="center"
-          justify={collapsed ? "center" : "flex-start"}
-          gap={collapsed ? 0 : 3}
-          px={collapsed ? 0 : 3}
+          justify={effectiveCollapsed ? "center" : "flex-start"}
+          gap={effectiveCollapsed ? 0 : 3}
+          px={effectiveCollapsed ? 0 : 3}
           py={2}
           rounded="md"
           fontSize="sm"
@@ -229,13 +260,14 @@ export function Sidebar({ role }: { role: "admin" | "annotator" }) {
           _hover={{ bg: "bg.muted", color: "red.400" }}
           transition="all 0.15s"
           onClick={handleLogout}
-          title={collapsed ? "Log out" : undefined}
+          title={effectiveCollapsed ? "Log out" : undefined}
           overflow="hidden"
         >
           <Box flexShrink={0}><LogOut size={18} /></Box>
-          {!collapsed && <Text fontSize="sm" whiteSpace="nowrap">Log out</Text>}
+          {!effectiveCollapsed && <Text fontSize="sm" whiteSpace="nowrap">Log out</Text>}
         </Flex>
       </Box>
     </Flex>
+    </>
   );
 }

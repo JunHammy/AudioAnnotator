@@ -119,12 +119,12 @@ export default function AdminDashboard() {
   }
 
   return (
-    <Box p={8} maxW="1200px">
+    <Box p={{ base: 4, md: 8 }} maxW="1200px">
       <Heading size="lg" color="fg" mb={1}>Admin Dashboard</Heading>
       <Text color="fg.muted" mb={6}>Overview of annotation progress</Text>
 
       {/* Stat cards */}
-      <Grid templateColumns="repeat(5, 1fr)" gap={4} mb={8}>
+      <Grid templateColumns={{ base: "1fr 1fr", md: "repeat(3, 1fr)", lg: "repeat(5, 1fr)" }} gap={4} mb={8}>
         <StatCard label="Total Files"           value={data.stats.total_files}            color="fg" />
         <StatCard label="Files Assigned"        value={data.stats.assigned_files}         color="blue.400" />
         <StatCard label="Completed Assignments" value={data.stats.completed_assignments}  color="green.400" />
@@ -155,12 +155,13 @@ export default function AdminDashboard() {
         </Box>
       </Grid>
 
-      <Grid templateColumns="3fr 2fr" gap={6} mb={8}>
+      <Grid templateColumns={{ base: "1fr", lg: "3fr 2fr" }} gap={6} mb={8}>
         {/* Recent activity */}
         <Box bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
           <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
             <Text fontWeight="semibold" color="fg">Recent Activity</Text>
           </Box>
+          <Box overflowX="auto">
           <Table.Root size="sm">
             <Table.Header>
               <Table.Row>
@@ -189,6 +190,7 @@ export default function AdminDashboard() {
               ))}
             </Table.Body>
           </Table.Root>
+          </Box>
         </Box>
 
         {/* Dataset progress */}
@@ -258,7 +260,7 @@ export default function AdminDashboard() {
           <Text fontWeight="semibold" color="fg">Task Breakdown</Text>
           <Text fontSize="xs" color="fg.muted">Completion rate per task type</Text>
         </Box>
-        <Grid templateColumns="repeat(3, 1fr)" gap={0} px={5} py={5}>
+        <Grid templateColumns={{ base: "1fr", md: "repeat(3, 1fr)" }} gap={0} px={5} py={5}>
           {(["speaker", "transcription", "emotion"] as const).map((type, i) => {
             const info = data.task_breakdown[type] ?? { total: 0, done: 0 };
             const rate = info.total > 0 ? Math.round((info.done / info.total) * 100) : 0;
@@ -287,6 +289,7 @@ export default function AdminDashboard() {
         <Box px={5} py={4} borderBottomWidth="1px" borderColor="border">
           <Text fontWeight="semibold" color="fg">Annotator Summary</Text>
         </Box>
+        <Box overflowX="auto">
         <Table.Root size="sm">
           <Table.Header>
             <Table.Row>
@@ -316,6 +319,7 @@ export default function AdminDashboard() {
             ))}
           </Table.Body>
         </Table.Root>
+        </Box>
       </Box>
     </Box>
   );

@@ -392,8 +392,8 @@ export default function AssignTasksPage() {
 
 
   return (
-    <Box p={8} h="full">
-      <HStack mb={1} justify="space-between" align="flex-start">
+    <Box p={{ base: 4, md: 8 }} h="full">
+      <HStack mb={1} justify="space-between" align="flex-start" flexWrap="wrap" gap={2}>
         <Heading size="lg" color="fg">Assign Tasks</Heading>
         <HStack gap={2}>
           <Button size="sm" colorPalette="teal" variant="outline" onClick={() => { resetBulk(); setBulkOpen(true); }}>
@@ -407,17 +407,17 @@ export default function AssignTasksPage() {
       {loading ? (
         <Text color="fg.muted">Loading…</Text>
       ) : (
-        <Flex gap={5} h="calc(100vh - 180px)" align="start">
+        <Flex gap={5} h={{ md: "calc(100vh - 180px)" }} align="start" flexDir={{ base: "column", md: "row" }}>
           {/* ── Left: file list ─────────────────────────────────── */}
           <Box
-            w="340px"
+            w={{ base: "full", md: "340px" }}
             flexShrink={0}
             bg="bg.subtle"
             borderWidth="1px"
             borderColor="border"
             rounded="lg"
             overflow="hidden"
-            h="full"
+            h={{ base: "auto", md: "full" }}
           >
             <Box px={4} py={3} borderBottomWidth="1px" borderColor="border">
               <Text fontSize="sm" fontWeight="semibold" color="fg" mb={2}>Audio Files ({audioFiles.length})</Text>
@@ -433,7 +433,7 @@ export default function AssignTasksPage() {
             </Box>
             <Box
               overflow="auto"
-              h="calc(100% - 80px)"
+              h={{ base: "220px", md: "calc(100% - 80px)" }}
               css={{
                 "&::-webkit-scrollbar": { width: "5px" },
                 "&::-webkit-scrollbar-track": { background: "transparent" },
@@ -489,7 +489,7 @@ export default function AssignTasksPage() {
 
           {/* ── Right: assignment panel ──────────────────────────── */}
           {selectedFile ? (
-            <Box flex={1} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" h="full">
+            <Box flex={1} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" h={{ base: "auto", md: "full" }} w={{ base: "full", md: "auto" }}>
               {/* File info bar + lock toggles */}
               <Box px={5} py={3} borderBottomWidth="1px" borderColor="border">
                 <Flex gap={4} align="center" wrap="wrap">
@@ -512,7 +512,7 @@ export default function AssignTasksPage() {
                 </Flex>
               </Box>
 
-              <Box overflow="auto" h="calc(100% - 50px)" px={5} py={4}>
+              <Box overflow="auto" h={{ base: "auto", md: "calc(100% - 50px)" }} px={5} py={4}>
                 {/* Assignment table */}
                 <Text fontSize="sm" fontWeight="semibold" color="fg" mb={3}>
                   Assigned Annotators — {groupedAssignments.size} assigned
@@ -520,6 +520,7 @@ export default function AssignTasksPage() {
 
                 {groupedAssignments.size > 0 && (
                   <Box borderWidth="1px" borderColor="border" rounded="md" overflow="hidden" mb={5}>
+                    <Box overflowX="auto">
                     <Table.Root size="sm">
                       <Table.Header>
                         <Table.Row>
@@ -660,6 +661,7 @@ export default function AssignTasksPage() {
                         })}
                       </Table.Body>
                     </Table.Root>
+                    </Box>
                   </Box>
                 )}
 
@@ -859,7 +861,7 @@ export default function AssignTasksPage() {
             </Dialog.Header>
 
             <Dialog.Body pt={4} pb={2}>
-              <Flex gap={5} align="start" minH="420px">
+              <Flex gap={5} align="start" minH={{ md: "420px" }} flexDir={{ base: "column", md: "row" }}>
 
                 {/* ── Left: file selection ── */}
                 <Box flex={1} minW={0}>
@@ -989,7 +991,7 @@ export default function AssignTasksPage() {
                 </Box>
 
                 {/* ── Right: combo + summary ── */}
-                <Box w="200px" flexShrink={0}>
+                <Box w={{ base: "full", md: "200px" }} flexShrink={0}>
                   <Text fontSize="xs" fontWeight="semibold" color="fg" mb={3}>Task Combination</Text>
 
                   <Box mb={4}>

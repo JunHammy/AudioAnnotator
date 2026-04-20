@@ -6,6 +6,7 @@ import {
   Badge,
   Box,
   Button,
+  Flex,
   HStack,
   Heading,
   IconButton,
@@ -523,14 +524,16 @@ function ReviewFinalizeInner() {
   }, [files, searchParams])
 
   return (
-    <Box h="100%" display="flex">
+    <Box h={{ base: "auto", md: "100%" }} display="flex" flexDir={{ base: "column", md: "row" }}>
       {/* Left sidebar — file list */}
       <Box
-        w="280px"
+        w={{ base: "full", md: "280px" }}
         flexShrink={0}
-        borderRightWidth="1px"
+        borderRightWidth={{ base: "0", md: "1px" }}
+        borderBottomWidth={{ base: "1px", md: "0" }}
         borderColor="border"
         overflowY="auto"
+        maxH={{ base: "220px", md: "none" }}
         p={3}
         css={{
           "&::-webkit-scrollbar": { width: "5px" },
@@ -635,7 +638,7 @@ function ReviewFinalizeInner() {
       </Box>
 
       {/* Right panel */}
-      <Box flex={1} overflowY="auto" p={6}>
+      <Box flex={1} overflowY="auto" p={{ base: 4, md: 6 }}>
         {!selectedFile ? (
           <Box textAlign="center" py={20} color="fg.muted">
             <Clock size={40} style={{ margin: "0 auto 12px" }} />
@@ -643,7 +646,7 @@ function ReviewFinalizeInner() {
           </Box>
         ) : (
           <VStack align="start" gap={6}>
-            <HStack justify="space-between" w="full" align="start">
+            <Flex justify="space-between" w="full" align="start" flexWrap="wrap" gap={2}>
               <Box>
                 <Heading size="md" color="fg">
                   {selectedFile.filename}
@@ -711,7 +714,7 @@ function ReviewFinalizeInner() {
                   <Download size={14} /> CSV
                 </Button>
               </HStack>
-            </HStack>
+            </Flex>
 
             {/* Remarks & response panel — only shown when annotator has written something */}
             {selectedFile.annotator_remarks && (
