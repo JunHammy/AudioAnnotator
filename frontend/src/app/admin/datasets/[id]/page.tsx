@@ -580,7 +580,7 @@ export default function DatasetDetailPage() {
                     <Table.Cell px={4} py={3}>
                       <HStack gap={2}>
                         {LOCK_TYPES.map(lt => {
-                          const locked = (file as Record<string, unknown>)[`collaborative_locked_${lt.key}`] as boolean
+                          const locked = (file as unknown as Record<string, unknown>)[`collaborative_locked_${lt.key}`] as boolean
                           return (
                             <LockToggle key={lt.key} locked={locked} label={lt.label}
                               loading={lockLoading[`${file.id}-${lt.key}`]}
