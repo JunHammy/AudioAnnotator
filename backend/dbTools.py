@@ -88,14 +88,14 @@ def info(msg): print(f"  ·  {msg}")
 
 
 def _renumber_speaker(label: str) -> str:
-    """Convert speaker_0 → speaker_1, speaker_1 → speaker_2, etc. (0-based → 1-based)."""
+    """Pass speaker_N labels through unchanged (already 0-based)."""
     if not label:
         return label
     lower = label.lower()
     if lower.startswith("speaker_"):
         try:
             n = int(lower.split("_", 1)[1])
-            return f"speaker_{n + 1}"
+            return f"speaker_{n}"
         except ValueError:
             pass
     return label

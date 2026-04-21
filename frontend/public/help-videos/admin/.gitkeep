@@ -1,0 +1,12 @@
+# Drop your admin help videos here.
+# Expected filenames (MP4 or WebM, autoplay loop, ~10-30s each):
+#
+#   01-dashboard.mp4     — pan across stat cards, dataset progress, annotator summary
+#   02-upload.mp4        — single file upload flow, then folder upload with subfolder detection
+#   03-datasets.mp4      — datasets list → edit dataset card → add files → export buttons
+#   04-files.mp4         — dataset detail → search → archive a file → restore from archived view
+#   05-accounts.mp4      — manage accounts → create user → per-user action buttons
+#   06-assign.mp4        — single-file assignment → bulk assign → reopen a completed task
+#   07-review.mp4        — review page → open file → tabs → emotion pills → lock toggle → export
+#   08-export.mp4        — export from dataset detail page, then from single file in review
+#   09-bracket-words.mp4 — bracket words page → add a word → save

@@ -119,11 +119,14 @@ function fmtTime(t: number): string {
 }
 
 const SPEAKER_COLORS: Record<string, string> = {
-  speaker_1: "#3b82f6",
-  speaker_2: "#10b981",
-  speaker_3: "#f59e0b",
-  speaker_4: "#ef4444",
-  speaker_5: "#8b5cf6",
+  speaker_0: "#3b82f6",
+  speaker_1: "#10b981",
+  speaker_2: "#f59e0b",
+  speaker_3: "#ef4444",
+  speaker_4: "#8b5cf6",
+  speaker_5: "#ec4899",
+  speaker_unknown: "#6b7280",
+  speaker_group:   "#f97316",
 }
 function speakerColor(label: string | null): string {
   if (!label) return "#6b7280"
@@ -728,10 +731,13 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                   collection={createListCollection({
                     items: [
                       ...(speakerLabels ?? []).map(l => ({ label: l, value: l })),
-                      // Include current label if it's not in the list (manually typed)
+                      // Include current label if it's not in the list (manually typed, not a special label)
                       ...(speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
+                        && !["speaker_unknown", "speaker_group"].includes(speakerLabel)
                         ? [{ label: speakerLabel, value: speakerLabel }]
                         : []),
+                      { label: "speaker_unknown", value: "speaker_unknown" },
+                      { label: "speaker_group",   value: "speaker_group"  },
                       { label: "+ Add new speaker", value: "__add_new__" },
                     ],
                   })}
@@ -761,11 +767,18 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                           {v}
                         </Select.Item>
                       ))}
-                      {speakerLabel && !(speakerLabels ?? []).includes(speakerLabel) && (
+                      {speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
+                        && !["speaker_unknown", "speaker_group"].includes(speakerLabel) && (
                         <Select.Item item={{ label: speakerLabel, value: speakerLabel }}>
                           {speakerLabel}
                         </Select.Item>
                       )}
+                      <Select.Item item={{ label: "speaker_unknown", value: "speaker_unknown" }}>
+                        speaker_unknown
+                      </Select.Item>
+                      <Select.Item item={{ label: "speaker_group", value: "speaker_group" }}>
+                        speaker_group
+                      </Select.Item>
                       <Select.Item item={{ label: "+ Add new speaker", value: "__add_new__" }}>
                         + Add new speaker
                       </Select.Item>
@@ -1599,7 +1612,7 @@ function AnnotateInner() {
       .map(s => s.speaker_label?.match(/^speaker_(\d+)$/i))
       .filter(Boolean)
       .map(m => parseInt(m![1], 10))
-    const label = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 1}`
+    const label = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 0}`
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
@@ -2323,7 +2336,9 @@ function AnnotateInner() {
                     collection={createListCollection({
                       items: [
                         ...speakerLabels.map(l => ({ label: l, value: l })),
-                        { label: "— none / new —", value: "" },
+                        { label: "speaker_unknown", value: "speaker_unknown" },
+                        { label: "speaker_group",   value: "speaker_group"  },
+                        { label: "— none / new —",  value: ""               },
                       ],
                     })}
                     size="sm"
@@ -2338,7 +2353,9 @@ function AnnotateInner() {
                         {speakerLabels.map(l => (
                           <Select.Item key={l} item={{ label: l, value: l }}>{l}</Select.Item>
                         ))}
-                        <Select.Item item={{ label: "— none / new —", value: "" }}>— none / new —</Select.Item>
+                        <Select.Item item={{ label: "speaker_unknown", value: "speaker_unknown" }}>speaker_unknown</Select.Item>
+                        <Select.Item item={{ label: "speaker_group",   value: "speaker_group"  }}>speaker_group</Select.Item>
+                        <Select.Item item={{ label: "— none / new —",  value: ""               }}>— none / new —</Select.Item>
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>

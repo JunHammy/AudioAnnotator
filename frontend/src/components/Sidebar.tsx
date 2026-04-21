@@ -10,6 +10,7 @@ import {
   ClipboardList,
   X,
   Database,
+  HelpCircle,
   LogOut,
   Mic2,
   ListTodo,
@@ -39,11 +40,13 @@ const ADMIN_NAV: NavItem[] = [
   { label: "Review & Finalize",   href: "/admin/review",             icon: <CheckSquare   size={18} /> },
   { label: "Bracket Words",       href: "/admin/bracket-words",      icon: <Tag           size={18} /> },
   { label: "Activity Log",        href: "/admin/activity",           icon: <ScrollText    size={18} /> },
+  { label: "Help",                href: "/admin/help",               icon: <HelpCircle    size={18} /> },
 ];
 
 const ANNOTATOR_NAV: NavItem[] = [
-  { label: "My Tasks",        href: "/annotator",          icon: <ListTodo size={18} /> },
-  { label: "Annotation View", href: "/annotator/annotate", icon: <Mic2     size={18} /> },
+  { label: "My Tasks",        href: "/annotator",          icon: <ListTodo    size={18} /> },
+  { label: "Annotation View", href: "/annotator/annotate", icon: <Mic2        size={18} /> },
+  { label: "Help",            href: "/annotator/help",     icon: <HelpCircle  size={18} /> },
 ];
 
 const STORAGE_KEY = "sidebar-collapsed";

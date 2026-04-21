@@ -58,7 +58,7 @@ def _renumber_speaker(label: str) -> str:
     if lower.startswith("speaker_"):
         try:
             n = int(lower.split("_", 1)[1])
-            return f"speaker_{n + 1}"
+            return f"speaker_{n}"
         except ValueError:
             pass
     return label

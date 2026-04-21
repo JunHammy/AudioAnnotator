@@ -1,0 +1,13 @@
+# Drop your annotator help videos here.
+# Expected filenames (MP4 or WebM, autoplay loop, ~10-30s each):
+#
+#   01-my-tasks.mp4       — stat cards, task table, Start/Continue button
+#   02-notifications.mp4  — bell icon with badge → notifications panel
+#   03-layout.mp4         — full annotation view: waveform + accordion + editor panel
+#   04-waveform.mp4       — play/pause, seek, zoom, speed, click-drag to add segment
+#   05-speaker.mp4        — select segment → speaker label → gender → save
+#   06-transcription.mp4  — click transcription segment → edit text → notes → save
+#   07-emotions.mp4       — emotion checkboxes → add Other → ambiguous → save → badges
+#   08-complete.mp4       — Mark Complete button → confirmation → auto-lock warning
+#   09-remarks.mp4        — remarks box → type message → submit
+#   10-shortcuts.mp4      — Space / S / N keys and the ? shortcuts panel

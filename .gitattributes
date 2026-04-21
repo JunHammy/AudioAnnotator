@@ -1,0 +1,5 @@
+# Force LF line endings for shell scripts — Windows CRLF breaks Linux exec
+*.sh text eol=lf
+
+# Keep other text files using the platform default
+* text=auto
