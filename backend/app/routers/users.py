@@ -75,7 +75,7 @@ async def delete_user(
     await db.execute(sql_text("DELETE FROM assignments WHERE annotator_id = :uid"), {"uid": uid})
     await db.flush()
 
-    await db.expunge(user)
+    db.expunge(user)
     await db.execute(sql_text("DELETE FROM users WHERE id = :uid"), {"uid": uid})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
