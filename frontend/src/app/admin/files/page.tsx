@@ -240,6 +240,9 @@ export default function ManageFilesPage() {
   const [archivedOpen, setArchivedOpen] = useState(false)
   const [permDeleteTarget, setPermDeleteTarget] = useState<AudioFile | null>(null)
   const [permDeleting, setPermDeleting] = useState(false)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeletePassword, setBulkDeletePassword] = useState("")
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Filters
   const [search, setSearch] = useState("")
@@ -401,6 +404,25 @@ export default function ManageFilesPage() {
       ToastWizard.standard("error", "Failed to permanently delete file")
     } finally {
       setPermDeleting(false)
+    }
+  }
+
+  // ── Bulk delete all archived ─────────────────────────────────────────────────
+
+  const confirmBulkDelete = async () => {
+    setBulkDeleting(true)
+    try {
+      const res = await api.delete("/api/audio-files/bulk-permanent", { data: { password: bulkDeletePassword } })
+      const count = res.data.deleted
+      setArchivedFiles([])
+      setBulkDeleteOpen(false)
+      setBulkDeletePassword("")
+      ToastWizard.standard("success", `Permanently deleted ${count} archived file${count !== 1 ? "s" : ""}`)
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail ?? "Failed to delete archived files"
+      ToastWizard.standard("error", msg)
+    } finally {
+      setBulkDeleting(false)
     }
   }
 
@@ -649,12 +671,17 @@ export default function ManageFilesPage() {
       {/* Archived files section */}
       {archivedFiles.length > 0 && (
         <Collapsible.Root open={archivedOpen} onOpenChange={d => setArchivedOpen(d.open)} mt={6}>
-          <Collapsible.Trigger asChild>
-            <Button size="sm" variant="ghost" color="fg.muted" px={2}>
-              {archivedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              Archived files ({archivedFiles.length})
+          <HStack justify="space-between">
+            <Collapsible.Trigger asChild>
+              <Button size="sm" variant="ghost" color="fg.muted" px={2}>
+                {archivedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                Archived files ({archivedFiles.length})
+              </Button>
+            </Collapsible.Trigger>
+            <Button size="xs" colorPalette="red" variant="ghost" onClick={() => setBulkDeleteOpen(true)}>
+              <Trash2 size={11} /> Delete All Archived
             </Button>
-          </Collapsible.Trigger>
+          </HStack>
           <Collapsible.Content>
             <Box mt={3} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
               <Table.Root size="sm">
@@ -716,6 +743,43 @@ export default function ManageFilesPage() {
                 </Button>
                 <Button size="sm" colorPalette="orange" onClick={confirmArchive} loading={archiving}>
                   <Archive size={13} /> Archive
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Bulk delete all archived dialog */}
+      <Dialog.Root open={bulkDeleteOpen} onOpenChange={({ open }) => { if (!open && !bulkDeleting) { setBulkDeleteOpen(false); setBulkDeletePassword("") } }}>
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" maxW="420px">
+              <Dialog.Header>
+                <Dialog.Title color="fg">Delete All Archived Files</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text color="fg.muted" fontSize="sm">
+                  Permanently delete all {archivedFiles.length} archived file{archivedFiles.length !== 1 ? "s" : ""} and all their linked data (segments, assignments, JSONs)? This cannot be undone.
+                </Text>
+                <Text mt={3} mb={2} fontSize="xs" color="fg.muted">Enter your password to confirm:</Text>
+                <Input
+                  size="sm"
+                  type="password"
+                  placeholder="Your password"
+                  value={bulkDeletePassword}
+                  onChange={e => setBulkDeletePassword(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && bulkDeletePassword) confirmBulkDelete() }}
+                  bg="bg.muted"
+                  borderColor="border"
+                  color="fg"
+                />
+              </Dialog.Body>
+              <Dialog.Footer gap={2}>
+                <Button size="sm" variant="ghost" onClick={() => { setBulkDeleteOpen(false); setBulkDeletePassword("") }} disabled={bulkDeleting}>Cancel</Button>
+                <Button size="sm" colorPalette="red" onClick={confirmBulkDelete} loading={bulkDeleting} disabled={!bulkDeletePassword}>
+                  <Trash2 size={13} /> Delete All Permanently
                 </Button>
               </Dialog.Footer>
             </Dialog.Content>

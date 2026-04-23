@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete as sa_delete
 from sqlalchemy.orm import selectinload
 
+from pydantic import BaseModel
+
 from app.auth.dependencies import get_current_user, require_admin
+from app.auth.jwt import verify_password
 from app.config import settings
 from app.services.sse import sse_manager
 from app.database import get_db
@@ -422,6 +425,45 @@ async def stream_audio(
 
     media_type = "audio/mpeg" if path.suffix.lower() == ".mp3" else "audio/wav"
     return FileResponse(path=str(path), media_type=media_type, filename=af.filename)
+
+
+class BulkDeleteBody(BaseModel):
+    password: str
+
+
+@router.delete("/bulk-permanent", status_code=200)
+async def bulk_permanently_delete_archived(
+    body: BulkDeleteBody,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Permanently delete ALL archived files. Requires admin password confirmation."""
+    if not verify_password(body.password, admin.password_hash):
+        raise HTTPException(status_code=403, detail="Incorrect password.")
+
+    result = await db.execute(select(AudioFile).where(AudioFile.is_deleted == True))
+    archived = result.scalars().all()
+
+    deleted_count = 0
+    for af in archived:
+        file_id = af.id
+        file_path = af.file_path
+        filename = af.filename
+        await db.execute(sa_delete(SpeakerSegment).where(SpeakerSegment.audio_file_id == file_id))
+        await db.execute(sa_delete(TranscriptionSegment).where(TranscriptionSegment.audio_file_id == file_id))
+        await db.execute(sa_delete(Assignment).where(Assignment.audio_file_id == file_id))
+        await db.execute(sa_delete(FinalAnnotation).where(FinalAnnotation.audio_file_id == file_id))
+        await db.execute(sa_delete(OriginalJSONStore).where(OriginalJSONStore.audio_file_id == file_id))
+        await db.execute(sa_delete(AudioFile).where(AudioFile.id == file_id))
+        try:
+            Path(file_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+        deleted_count += 1
+
+    await write_audit_log(db, admin.id, "bulk_permanent_delete_archived", "audio_file", None,
+                          {"count": deleted_count})
+    return {"deleted": deleted_count}
 
 
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
