@@ -21,6 +21,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
+    volumes:
+      - ./frontend/public/help-videos:/app/public/help-videos:ro
     environment:
       - BACKEND_URL=http://backend:8000
     depends_on:
