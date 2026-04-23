@@ -729,28 +729,13 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
               ) : (
                 <Select.Root
                   collection={createListCollection({
-                    items: [
-                      ...(speakerLabels ?? []).filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => ({ label: l, value: l })),
-                      // Include current label if it's not in the list (manually typed, not a special label)
-                      ...(speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
-                        && !["speaker_unknown", "speaker_group"].includes(speakerLabel)
-                        ? [{ label: speakerLabel, value: speakerLabel }]
-                        : []),
-                      { label: "speaker_unknown", value: "speaker_unknown" },
-                      { label: "speaker_group",   value: "speaker_group"  },
-                      { label: "+ Add new speaker", value: "__add_new__" },
-                    ],
+                    items: (speakerLabels ?? []).map(l => ({ label: l, value: l })),
                   })}
                   size="sm"
                   value={speakerLabel ? [speakerLabel] : []}
                   onValueChange={({ value }) => {
                     const v = value[0] ?? ""
-                    if (v === "__add_new__") {
-                      setAddingSpeaker(true)
-                      return
-                    }
                     setSpeakerLabel(v)
-                    // Auto-fill gender from known speaker
                     if (getGenderForSpeaker) {
                       const known = getGenderForSpeaker(v)
                       if (known && known !== "unk") setGender(known)
@@ -762,26 +747,11 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                   </Select.Trigger>
                   <Select.Positioner>
                     <Select.Content>
-                      {(speakerLabels ?? []).filter(v => !["speaker_unknown", "speaker_group"].includes(v)).map(v => (
+                      {(speakerLabels ?? []).map(v => (
                         <Select.Item key={v} item={{ label: v, value: v }}>
                           {v}
                         </Select.Item>
                       ))}
-                      {speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
-                        && !["speaker_unknown", "speaker_group"].includes(speakerLabel) && (
-                        <Select.Item item={{ label: speakerLabel, value: speakerLabel }}>
-                          {speakerLabel}
-                        </Select.Item>
-                      )}
-                      <Select.Item item={{ label: "speaker_unknown", value: "speaker_unknown" }}>
-                        speaker_unknown
-                      </Select.Item>
-                      <Select.Item item={{ label: "speaker_group", value: "speaker_group" }}>
-                        speaker_group
-                      </Select.Item>
-                      <Select.Item item={{ label: "+ Add new speaker", value: "__add_new__" }}>
-                        + Add new speaker
-                      </Select.Item>
                     </Select.Content>
                   </Select.Positioner>
                 </Select.Root>
@@ -2339,15 +2309,10 @@ function AnnotateInner() {
                   <Field.Label fontSize="xs">Speaker</Field.Label>
                   <Select.Root
                     collection={createListCollection({
-                      items: [
-                        ...speakerLabels.filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => ({ label: l, value: l })),
-                        { label: "speaker_unknown", value: "speaker_unknown" },
-                        { label: "speaker_group",   value: "speaker_group"  },
-                        { label: "— none / new —",  value: ""               },
-                      ],
+                      items: speakerLabels.map(l => ({ label: l, value: l })),
                     })}
                     size="sm"
-                    value={segmentModal.speaker ? [segmentModal.speaker] : [""]}
+                    value={segmentModal.speaker ? [segmentModal.speaker] : []}
                     onValueChange={({ value }) => setSegmentModal(m => ({ ...m, speaker: value[0] ?? "" }))}
                   >
                     <Select.Trigger bg="bg.muted" borderColor="border">
@@ -2355,12 +2320,9 @@ function AnnotateInner() {
                     </Select.Trigger>
                     <Select.Positioner>
                       <Select.Content>
-                        {speakerLabels.filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => (
+                        {speakerLabels.map(l => (
                           <Select.Item key={l} item={{ label: l, value: l }}>{l}</Select.Item>
                         ))}
-                        <Select.Item item={{ label: "speaker_unknown", value: "speaker_unknown" }}>speaker_unknown</Select.Item>
-                        <Select.Item item={{ label: "speaker_group",   value: "speaker_group"  }}>speaker_group</Select.Item>
-                        <Select.Item item={{ label: "— none / new —",  value: ""               }}>— none / new —</Select.Item>
                       </Select.Content>
                     </Select.Positioner>
                   </Select.Root>
