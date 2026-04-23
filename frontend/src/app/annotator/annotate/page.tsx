@@ -2604,7 +2604,6 @@ function AnnotateInner() {
                       _hover={{ borderColor: "teal.500", bg: "bg" }}
                       transition="all 0.12s"
                       onClick={() => { setSpeakerPickerOpen(false); addSpeaker(opt.value) }}
-                      disabled={addingSegment}
                     >
                       <HStack gap={2.5}>
                         <Box w="10px" h="10px" rounded="full" bg={opt.color} flexShrink={0} />
