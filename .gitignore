@@ -69,6 +69,10 @@ Thumbs.db
 # Uploaded audio files (stored outside repo)
 backend/uploads/
 
+# Help videos — too large for GitHub, transfer to EC2 separately via scp
+frontend/public/help-videos/**/*.mp4
+frontend/public/help-videos/**/*.webm
+
 # Export / output files
 exports/
 output/

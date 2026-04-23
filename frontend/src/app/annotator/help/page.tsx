@@ -1,33 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
   Flex,
   Grid,
   Heading,
+  Skeleton,
   Table,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Video } from "lucide-react";
+import { Maximize2, Video } from "lucide-react";
 
 // ── Video Slot ──────────────────────────────────────────────────────────────
 
 function VideoSlot({ src, label }: { src: string; label: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [hovered, setHovered] = useState(false);
+  const mediaRef = useRef<HTMLVideoElement & HTMLImageElement>(null);
   const isImage = /\.(png|jpe?g|webp|gif)$/i.test(src);
+
+  // Catch already-loaded media (browser cache): events fire before React attaches handlers
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el) return;
+    if (isImage) {
+      if ((el as HTMLImageElement).complete) setStatus("ready");
+    } else {
+      if ((el as HTMLVideoElement).readyState >= 3) setStatus("ready");
+    }
+  }, [isImage]);
+
+  const openFullscreen = () => {
+    const el = mediaRef.current;
+    if (!el) return;
+    if (el.requestFullscreen) el.requestFullscreen();
+  };
+
   return (
-    <Box rounded="xl" overflow="hidden" borderWidth="1px" borderColor="border" my={5} bg="bg.muted">
+    <Box
+      position="relative"
+      rounded="xl"
+      overflow="hidden"
+      borderWidth="1px"
+      borderColor="border"
+      my={5}
+      bg="bg.muted"
+      minH="220px"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Always keep media in DOM so the browser can load / autoplay it.
+          Opacity-hide while loading rather than display:none, which blocks autoplay. */}
       {isImage ? (
         <img
+          ref={mediaRef as React.RefObject<HTMLImageElement>}
           src={src}
           alt={label}
           onLoad={() => setStatus("ready")}
           onError={() => setStatus("error")}
           style={{
-            display: status === "ready" ? "block" : "none",
+            display: status === "error" ? "none" : "block",
+            opacity: status === "ready" ? 1 : 0,
+            transition: "opacity 0.35s ease",
             width: "100%",
             maxHeight: "420px",
             objectFit: "contain",
@@ -35,6 +72,7 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
         />
       ) : (
         <video
+          ref={mediaRef as React.RefObject<HTMLVideoElement>}
           src={src}
           autoPlay
           loop
@@ -43,7 +81,9 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
           onCanPlay={() => setStatus("ready")}
           onError={() => setStatus("error")}
           style={{
-            display: status === "ready" ? "block" : "none",
+            display: status === "error" ? "none" : "block",
+            opacity: status === "ready" ? 1 : 0,
+            transition: "opacity 0.35s ease",
             width: "100%",
             maxHeight: "420px",
             objectFit: "contain",
@@ -51,41 +91,44 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
           }}
         />
       )}
-      {status !== "ready" && (
-        <Flex direction="column" align="center" justify="center" minH="180px" gap={3} px={6} py={8}>
+
+      {/* Skeleton overlay while loading */}
+      {status === "loading" && (
+        <Box position="absolute" inset={0}>
+          <Skeleton h="full" w="full" rounded="none" />
+        </Box>
+      )}
+
+      {/* Error / not-yet-recorded placeholder */}
+      {status === "error" && (
+        <Flex direction="column" align="center" justify="center" minH="220px" gap={3} px={6} py={8}>
           <Box
-            w="52px"
-            h="52px"
-            rounded="xl"
-            bg="bg.subtle"
-            borderWidth="1px"
-            borderColor="border"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
+            w="52px" h="52px" rounded="xl" bg="bg.subtle"
+            borderWidth="1px" borderColor="border"
+            display="flex" alignItems="center" justifyContent="center"
           >
             <Video size={24} color="var(--chakra-colors-fg-muted)" />
           </Box>
-          <Text fontSize="sm" fontWeight="medium" color="fg" textAlign="center">
-            {label}
-          </Text>
-          <Text fontSize="xs" color="fg.muted" textAlign="center">
-            Screen recording goes here
-          </Text>
-          <Box
-            px={3}
-            py={1.5}
-            bg="bg.subtle"
-            borderWidth="1px"
-            borderColor="border"
-            rounded="md"
-            fontFamily="mono"
-            fontSize="11px"
-            color="fg.muted"
-          >
+          <Text fontSize="sm" fontWeight="medium" color="fg" textAlign="center">{label}</Text>
+          <Text fontSize="xs" color="fg.muted" textAlign="center">Screen recording goes here</Text>
+          <Box px={3} py={1.5} bg="bg.subtle" borderWidth="1px" borderColor="border"
+            rounded="md" fontFamily="mono" fontSize="11px" color="fg.muted">
             {src}
           </Box>
         </Flex>
+      )}
+
+      {/* Fullscreen button on hover */}
+      {status === "ready" && hovered && (
+        <Box
+          position="absolute" top={2} right={2}
+          w="30px" h="30px" bg="blackAlpha.700" rounded="md"
+          display="flex" alignItems="center" justifyContent="center"
+          cursor="pointer" onClick={openFullscreen} title="Fullscreen"
+          _hover={{ bg: "blackAlpha.900" }} transition="background 0.15s"
+        >
+          <Maximize2 size={14} color="white" />
+        </Box>
       )}
     </Box>
   );
@@ -126,9 +169,9 @@ function Steps({ items }: { items: (string | React.ReactNode)[] }) {
 // ── Note / Callout ──────────────────────────────────────────────────────────
 
 function Note({ children, color = "blue" }: { children: React.ReactNode; color?: "blue" | "orange" }) {
-  const bg     = color === "orange" ? "orange.950" : "blue.950";
+  const bg = color === "orange" ? "orange.950" : "blue.950";
   const border = color === "orange" ? "orange.500" : "blue.500";
-  const text   = color === "orange" ? "orange.200" : "blue.200";
+  const text = color === "orange" ? "orange.200" : "blue.200";
   return (
     <Box
       bg={bg}
@@ -161,8 +204,8 @@ function Section({
   number: string;
   title: string;
   intro: string;
-  videoSrc: string;
-  videoLabel: string;
+  videoSrc?: string;
+  videoLabel?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -193,7 +236,7 @@ function Section({
       <Text color="fg.muted" fontSize="sm" lineHeight="1.8" mb={2}>
         {intro}
       </Text>
-      <VideoSlot src={videoSrc} label={videoLabel} />
+      {videoSrc && videoLabel && <VideoSlot src={videoSrc} label={videoLabel} />}
       {children}
     </Box>
   );
@@ -202,16 +245,16 @@ function Section({
 // ── TOC ─────────────────────────────────────────────────────────────────────
 
 const TOC_ITEMS = [
-  { href: "#my-tasks",       label: "1.   My Tasks Overview" },
-  { href: "#notifications",  label: "2.   Notifications" },
-  { href: "#layout",         label: "3.   Annotation View Layout" },
-  { href: "#waveform",       label: "4.   Waveform Player" },
-  { href: "#speaker",        label: "5.   Speaker & Gender" },
-  { href: "#transcription",  label: "6.   Transcription" },
-  { href: "#emotions",       label: "7.   Annotating Emotions" },
-  { href: "#complete",       label: "8.   Marking Complete" },
-  { href: "#remarks",        label: "9.   Writing Remarks" },
-  { href: "#shortcuts",      label: "10.  Keyboard Shortcuts" },
+  { href: "#my-tasks", label: "1.   My Tasks Overview" },
+  { href: "#notifications", label: "2.   Notifications" },
+  { href: "#layout", label: "3.   Annotation View Layout" },
+  { href: "#waveform", label: "4.   Waveform Player" },
+  { href: "#speaker", label: "5.   Speaker & Gender" },
+  { href: "#transcription", label: "6.   Transcription" },
+  { href: "#emotions", label: "7.   Annotating Emotions" },
+  { href: "#complete", label: "8.   Marking Complete" },
+  { href: "#remarks", label: "9.   Writing Remarks" },
+  { href: "#shortcuts", label: "10.  Keyboard Shortcuts" },
 ];
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -309,7 +352,7 @@ export default function AnnotatorHelpPage() {
             number="03"
             title="Annotation View Layout"
             intro="The Annotation View is where all annotation work happens. It is split into three main areas."
-            videoSrc="/help-videos/annotator/03-layout.mp4"
+            videoSrc="/help-videos/annotator/03-layout.png"
             videoLabel="Full annotation view showing waveform, segment accordion, and editor panel"
           >
             <Steps items={[
@@ -450,11 +493,9 @@ export default function AnnotatorHelpPage() {
             number="10"
             title="Keyboard Shortcuts"
             intro="Use keyboard shortcuts to annotate faster. Press ? anywhere in the annotation view to open the shortcuts panel."
-            videoSrc="/help-videos/annotator/10-shortcuts.mp4"
-            videoLabel="Space, S, N keys and the ? shortcuts panel"
           >
-            <Box my={4} borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
-              <Table.Root size="sm">
+            <Box borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden" mt={4}>
+              <Table.Root>
                 <Table.Header>
                   <Table.Row bg="bg.muted">
                     <Table.ColumnHeader px={4} py={3} color="fg.muted" fontSize="xs" w="130px">Key</Table.ColumnHeader>
@@ -463,21 +504,21 @@ export default function AnnotatorHelpPage() {
                 </Table.Header>
                 <Table.Body>
                   {[
-                    ["Space",     "Play / Pause audio"],
-                    ["← / →",    "Seek backward / forward 2 seconds"],
-                    ["S",        "Save the current segment"],
-                    ["N",        "Jump to the next unannotated segment"],
-                    ["1",        "Toggle Neutral"],
-                    ["2",        "Toggle Happy"],
-                    ["3",        "Toggle Sad"],
-                    ["4",        "Toggle Angry"],
-                    ["5",        "Toggle Surprised"],
-                    ["6",        "Toggle Fear"],
-                    ["7",        "Toggle Disgust"],
-                    ["8",        "Add a new Other emotion entry"],
-                    ["A",        "Toggle Ambiguous flag"],
+                    ["Space", "Play / Pause audio"],
+                    ["← / →", "Seek backward / forward 2 seconds"],
+                    ["S", "Save the current segment"],
+                    ["N", "Jump to the next unannotated segment"],
+                    ["1", "Toggle Neutral"],
+                    ["2", "Toggle Happy"],
+                    ["3", "Toggle Sad"],
+                    ["4", "Toggle Angry"],
+                    ["5", "Toggle Surprised"],
+                    ["6", "Toggle Fear"],
+                    ["7", "Toggle Disgust"],
+                    ["8", "Add a new Other emotion entry"],
+                    ["A", "Toggle Ambiguous flag"],
                     ["Ctrl + Z", "Undo last segment save"],
-                    ["?",        "Open keyboard shortcuts panel"],
+                    ["?", "Open keyboard shortcuts panel"],
                   ].map(([key, action]) => (
                     <Table.Row key={key} _hover={{ bg: "bg.muted" }}>
                       <Table.Cell px={4} py={3}>

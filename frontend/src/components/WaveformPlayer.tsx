@@ -257,6 +257,7 @@ const WaveformPlayer = forwardRef<WaveformPlayerRef, Props>(
           borderWidth="1px"
           borderColor="border"
           opacity={ready ? 1 : 0.5}
+          style={{ isolation: "isolate" }}
           css={{
             "&::-webkit-scrollbar": { height: "4px" },
             "&::-webkit-scrollbar-track": { background: "transparent" },

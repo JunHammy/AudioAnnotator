@@ -1090,6 +1090,7 @@ function AnnotateInner() {
   const [remarksSaving, setRemarksSaving] = useState(false)
   const [remarksOpen, setRemarksOpen] = useState(false)
   const [addingSegment, setAddingSegment] = useState(false)
+  const [speakerPickerOpen, setSpeakerPickerOpen] = useState(false)
   const [segmentModal, setSegmentModal] = useState<{ open: boolean; speaker: string; start: number; end: number }>({ open: false, speaker: "", start: 0, end: 2 })
   const [trModal, setTrModal] = useState<{ open: boolean; start: number; end: number; originalText: string; alignTo: string }>({ open: false, start: 0, end: 2, originalText: "", alignTo: "" })
   const [openAccordions, setOpenAccordions] = useState<Set<string>>(new Set())
@@ -1605,14 +1606,18 @@ function AnnotateInner() {
     }
   }
 
-  const addSpeaker = async () => {
+  const addSpeaker = async (labelOverride?: string) => {
     if (!data) return
-    // Auto-generate the next speaker_N label
-    const nums = data.speaker_segments
-      .map(s => s.speaker_label?.match(/^speaker_(\d+)$/i))
-      .filter(Boolean)
-      .map(m => parseInt(m![1], 10))
-    const label = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 0}`
+    let label: string
+    if (labelOverride && labelOverride !== "auto") {
+      label = labelOverride
+    } else {
+      const nums = data.speaker_segments
+        .map(s => s.speaker_label?.match(/^speaker_(\d+)$/i))
+        .filter(Boolean)
+        .map(m => parseInt(m![1], 10))
+      label = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 0}`
+    }
     setAddingSegment(true)
     try {
       const currentT = playerRef.current?.getCurrentTime() ?? 0
@@ -1960,7 +1965,7 @@ function AnnotateInner() {
         <HStack gap={2} flexWrap="wrap">
           {/* Add Speaker */}
           {hasTask("speaker") && !data.audio_file.locked_speaker && (
-            <Button size="sm" variant="outline" colorPalette="teal" loading={addingSegment} onClick={addSpeaker}>
+            <Button size="sm" variant="outline" colorPalette="teal" loading={addingSegment} onClick={() => setSpeakerPickerOpen(true)}>
               <Plus size={13} /> Speaker
             </Button>
           )}
@@ -2558,6 +2563,61 @@ function AnnotateInner() {
                 <Save size={13} /> Save Remarks
               </Button>
             </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
+
+      {/* ── Speaker Type Picker ── */}
+      <Dialog.Root open={speakerPickerOpen} onOpenChange={({ open }) => setSpeakerPickerOpen(open)}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" maxW="320px" w="full">
+            <Dialog.Header borderBottomWidth="1px" borderColor="border" pb={3}>
+              <Dialog.Title fontSize="md" color="fg">Add Speaker</Dialog.Title>
+            </Dialog.Header>
+            <Dialog.Body pt={3} pb={4}>
+              <VStack gap={2} align="stretch">
+                {(() => {
+                  const nums = (data?.speaker_segments ?? [])
+                    .map(s => s.speaker_label?.match(/^speaker_(\d+)$/i))
+                    .filter(Boolean)
+                    .map(m => parseInt(m![1], 10))
+                  const nextLabel = `speaker_${nums.length > 0 ? Math.max(...nums) + 1 : 0}`
+                  const options = [
+                    { value: "auto",           label: nextLabel,         desc: "Numbered speaker",              color: speakerColor(nextLabel) },
+                    { value: "speaker_unknown", label: "speaker_unknown", desc: "Cannot identify the speaker",   color: speakerColor("speaker_unknown") },
+                    { value: "speaker_group",   label: "speaker_group",   desc: "Multiple speakers overlapping", color: speakerColor("speaker_group") },
+                  ]
+                  return options.map(opt => (
+                    <Box
+                      key={opt.value}
+                      as="button"
+                      w="full"
+                      textAlign="left"
+                      px={3}
+                      py={2.5}
+                      rounded="md"
+                      borderWidth="1px"
+                      borderColor="border"
+                      bg="bg.muted"
+                      cursor="pointer"
+                      _hover={{ borderColor: "teal.500", bg: "bg" }}
+                      transition="all 0.12s"
+                      onClick={() => { setSpeakerPickerOpen(false); addSpeaker(opt.value) }}
+                      disabled={addingSegment}
+                    >
+                      <HStack gap={2.5}>
+                        <Box w="10px" h="10px" rounded="full" bg={opt.color} flexShrink={0} />
+                        <Box>
+                          <Text fontSize="sm" fontWeight="medium" color="fg">{opt.label}</Text>
+                          <Text fontSize="xs" color="fg.muted">{opt.desc}</Text>
+                        </Box>
+                      </HStack>
+                    </Box>
+                  ))
+                })()}
+              </VStack>
+            </Dialog.Body>
           </Dialog.Content>
         </Dialog.Positioner>
       </Dialog.Root>

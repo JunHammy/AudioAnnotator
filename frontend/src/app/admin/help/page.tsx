@@ -1,32 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Badge,
   Box,
   Flex,
   Grid,
   Heading,
+  Skeleton,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { Video } from "lucide-react";
+import { Maximize2, Video } from "lucide-react";
 
 // ── Video Slot ──────────────────────────────────────────────────────────────
 
 function VideoSlot({ src, label }: { src: string; label: string }) {
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [hovered, setHovered] = useState(false);
+  const mediaRef = useRef<HTMLVideoElement & HTMLImageElement>(null);
   const isImage = /\.(png|jpe?g|webp|gif)$/i.test(src);
+
+  // Catch already-loaded media (browser cache): events fire before React attaches handlers
+  useEffect(() => {
+    const el = mediaRef.current;
+    if (!el) return;
+    if (isImage) {
+      if ((el as HTMLImageElement).complete) setStatus("ready");
+    } else {
+      if ((el as HTMLVideoElement).readyState >= 3) setStatus("ready");
+    }
+  }, [isImage]);
+
+  const openFullscreen = () => {
+    const el = mediaRef.current;
+    if (!el) return;
+    if (el.requestFullscreen) el.requestFullscreen();
+  };
+
   return (
-    <Box rounded="xl" overflow="hidden" borderWidth="1px" borderColor="border" my={5} bg="bg.muted">
+    <Box
+      position="relative"
+      rounded="xl"
+      overflow="hidden"
+      borderWidth="1px"
+      borderColor="border"
+      my={5}
+      bg="bg.muted"
+      minH="220px"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Always keep media in DOM so the browser can load / autoplay it.
+          Opacity-hide while loading rather than display:none, which blocks autoplay. */}
       {isImage ? (
         <img
+          ref={mediaRef as React.RefObject<HTMLImageElement>}
           src={src}
           alt={label}
           onLoad={() => setStatus("ready")}
           onError={() => setStatus("error")}
           style={{
-            display: status === "ready" ? "block" : "none",
+            display: status === "error" ? "none" : "block",
+            opacity: status === "ready" ? 1 : 0,
+            transition: "opacity 0.35s ease",
             width: "100%",
             maxHeight: "420px",
             objectFit: "contain",
@@ -34,6 +71,7 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
         />
       ) : (
         <video
+          ref={mediaRef as React.RefObject<HTMLVideoElement>}
           src={src}
           autoPlay
           loop
@@ -42,7 +80,9 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
           onCanPlay={() => setStatus("ready")}
           onError={() => setStatus("error")}
           style={{
-            display: status === "ready" ? "block" : "none",
+            display: status === "error" ? "none" : "block",
+            opacity: status === "ready" ? 1 : 0,
+            transition: "opacity 0.35s ease",
             width: "100%",
             maxHeight: "420px",
             objectFit: "contain",
@@ -50,41 +90,44 @@ function VideoSlot({ src, label }: { src: string; label: string }) {
           }}
         />
       )}
-      {status !== "ready" && (
-        <Flex direction="column" align="center" justify="center" minH="180px" gap={3} px={6} py={8}>
+
+      {/* Skeleton overlay while loading */}
+      {status === "loading" && (
+        <Box position="absolute" inset={0}>
+          <Skeleton h="full" w="full" rounded="none" />
+        </Box>
+      )}
+
+      {/* Error / not-yet-recorded placeholder */}
+      {status === "error" && (
+        <Flex direction="column" align="center" justify="center" minH="220px" gap={3} px={6} py={8}>
           <Box
-            w="52px"
-            h="52px"
-            rounded="xl"
-            bg="bg.subtle"
-            borderWidth="1px"
-            borderColor="border"
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
+            w="52px" h="52px" rounded="xl" bg="bg.subtle"
+            borderWidth="1px" borderColor="border"
+            display="flex" alignItems="center" justifyContent="center"
           >
             <Video size={24} color="var(--chakra-colors-fg-muted)" />
           </Box>
-          <Text fontSize="sm" fontWeight="medium" color="fg" textAlign="center">
-            {label}
-          </Text>
-          <Text fontSize="xs" color="fg.muted" textAlign="center">
-            Screen recording goes here
-          </Text>
-          <Box
-            px={3}
-            py={1.5}
-            bg="bg.subtle"
-            borderWidth="1px"
-            borderColor="border"
-            rounded="md"
-            fontFamily="mono"
-            fontSize="11px"
-            color="fg.muted"
-          >
+          <Text fontSize="sm" fontWeight="medium" color="fg" textAlign="center">{label}</Text>
+          <Text fontSize="xs" color="fg.muted" textAlign="center">Screen recording goes here</Text>
+          <Box px={3} py={1.5} bg="bg.subtle" borderWidth="1px" borderColor="border"
+            rounded="md" fontFamily="mono" fontSize="11px" color="fg.muted">
             {src}
           </Box>
         </Flex>
+      )}
+
+      {/* Fullscreen button on hover */}
+      {status === "ready" && hovered && (
+        <Box
+          position="absolute" top={2} right={2}
+          w="30px" h="30px" bg="blackAlpha.700" rounded="md"
+          display="flex" alignItems="center" justifyContent="center"
+          cursor="pointer" onClick={openFullscreen} title="Fullscreen"
+          _hover={{ bg: "blackAlpha.900" }} transition="background 0.15s"
+        >
+          <Maximize2 size={14} color="white" />
+        </Box>
       )}
     </Box>
   );
@@ -323,7 +366,7 @@ export default function AdminHelpPage() {
             id="datasets"
             number="03"
             title="Managing Datasets"
-            intro="Datasets group related audio files together. From the dataset overview you can see all datasets, edit their details, and export or add files."
+            intro="Datasets group related audio files together. From the dataset overview you can see all datasets, edit their details, add files, and export."
             videoSrc="/help-videos/admin/03-datasets.mp4"
             videoLabel="Datasets list → edit dataset → add files → export buttons"
           >
@@ -332,7 +375,8 @@ export default function AdminHelpPage() {
               <>To edit a dataset's name or other details, click the <strong>pencil icon</strong> on the dataset card.</>,
               "Click a dataset card to open its detail page, which lists all files in that dataset along with their assignment status.",
               <>Inside the dataset, the <strong>Add Files</strong> button (top right) opens a selector showing all unassigned files — tick the ones you want to move into this dataset and confirm.</>,
-              <>The <strong>Export JSON</strong> and <strong>Export CSV</strong> buttons download a zip file containing annotation data for every file in the dataset.</>,
+              <>Use the search box inside a dataset to filter files by name. Each file row lets you <strong>remove</strong> it from the dataset or <strong>move</strong> it to another dataset.</>,
+              <>The <strong>Export JSON</strong> and <strong>Export CSV</strong> buttons download a zip of annotation data for every file in the dataset.</>,
             ]} />
           </Section>
 
@@ -341,15 +385,18 @@ export default function AdminHelpPage() {
             id="files"
             number="04"
             title="Managing Files"
-            intro="Inside a dataset you can search, reorganise, archive, and delete individual audio files."
+            intro="Manage Files is a global view of every audio file across all datasets. Use it to monitor annotation progress, edit file metadata, manage locks, and archive or delete files."
             videoSrc="/help-videos/admin/04-files.mp4"
-            videoLabel="Dataset detail → search files → archive a file → restore from archived view"
+            videoLabel="Files list → status badges → edit metadata → lock toggles → archive"
           >
             <Steps items={[
-              <>Go to <strong>Datasets</strong> and click a dataset to open its file list.</>,
-              "Use the search box to filter files by name.",
-              <>Each file row has action buttons. You can: <strong>remove</strong> it from the current dataset, <strong>move</strong> it to another dataset, or <strong>archive</strong> it.</>,
-              <>Archiving is a soft delete — the file is hidden from all lists but not permanently removed. You can <strong>restore</strong> it or <strong>permanently delete</strong> it from the archived view.</>,
+              <>Go to <strong>Manage Files</strong> in the sidebar (below Datasets). All uploaded files appear here regardless of dataset.</>,
+              <>Each row shows the filename, dataset, duration, language, number of speakers, and a row of <strong>task progress pills</strong> (Spk / Gnd / Emo / Trn) showing how many annotators have completed each task.</>,
+              <>The <strong>status badge</strong> on each row shows the file's overall stage: <em>Unassigned</em>, <em>In Progress</em>, <em>Complete</em> (all annotators finished), or <em>Finalized</em> (speaker and transcription locked).</>,
+              <>Click the <strong>pencil icon</strong> on a file to edit its metadata — language, number of speakers, or which dataset it belongs to.</>,
+              <>The <strong>lock icons</strong> (Spk / Gnd / Trn) let you manually lock or unlock collaborative annotation tracks for a file. Locking speaker is required before emotion tasks can be assigned.</>,
+              <>The <strong>Export All (JSON)</strong> and <strong>Export All (CSV)</strong> buttons at the top download annotation data for every file across all datasets as a zip. For single-file export, use the Review &amp; Finalize page.</>,
+              <>To remove a file, click the <strong>archive</strong> button (orange). Archived files are hidden from all active lists. An <strong>Archived files</strong> section appears at the bottom of the page where you can <strong>restore</strong> a file or <strong>permanently delete</strong> it.</>,
             ]} />
             <Note color="orange">
               Permanent deletion removes all segments, annotations, and assignments for that file and cannot be undone. Use archiving when in doubt.

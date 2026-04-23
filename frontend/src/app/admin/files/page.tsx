@@ -6,6 +6,7 @@ import {
   Badge,
   Box,
   Button,
+  Collapsible,
   Dialog,
   Flex,
   HStack,
@@ -21,8 +22,11 @@ import {
   createListCollection,
 } from "@chakra-ui/react"
 import {
+  Archive,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   Database,
   Download,
@@ -30,6 +34,7 @@ import {
   Lock,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
   Unlock,
@@ -229,8 +234,12 @@ export default function ManageFilesPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [loading, setLoading] = useState(true)
   const [lockLoading, setLockLoading] = useState<Record<string, boolean>>({})
-  const [deleteTarget, setDeleteTarget] = useState<AudioFile | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [archiveTarget, setArchiveTarget] = useState<AudioFile | null>(null)
+  const [archiving, setArchiving] = useState(false)
+  const [archivedFiles, setArchivedFiles] = useState<AudioFile[]>([])
+  const [archivedOpen, setArchivedOpen] = useState(false)
+  const [permDeleteTarget, setPermDeleteTarget] = useState<AudioFile | null>(null)
+  const [permDeleting, setPermDeleting] = useState(false)
 
   // Filters
   const [search, setSearch] = useState("")
@@ -241,14 +250,17 @@ export default function ManageFilesPage() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [filesRes, assignRes, datasetsRes] = await Promise.all([
+      const [filesRes, assignRes, datasetsRes, allRes] = await Promise.all([
         api.get("/api/audio-files"),
         api.get("/api/assignments"),
         api.get("/api/datasets"),
+        api.get("/api/audio-files?include_deleted=true"),
       ])
       setFiles(filesRes.data)
       setAssignments(assignRes.data)
       setDatasets(datasetsRes.data)
+      const activeIds = new Set((filesRes.data as AudioFile[]).map(f => f.id))
+      setArchivedFiles((allRes.data as AudioFile[]).filter(f => !activeIds.has(f.id)))
     } catch {
       ToastWizard.standard("error", "Failed to load files")
     } finally {
@@ -343,21 +355,52 @@ export default function ManageFilesPage() {
     }
   }
 
-  // ── Delete file ─────────────────────────────────────────────────────────────
+  // ── Archive file (soft delete) ───────────────────────────────────────────────
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return
-    setDeleting(true)
+  const confirmArchive = async () => {
+    if (!archiveTarget) return
+    setArchiving(true)
     try {
-      await api.delete(`/api/audio-files/${deleteTarget.id}`)
-      setFiles(prev => prev.filter(f => f.id !== deleteTarget.id))
-      setAssignments(prev => prev.filter(a => a.audio_file_id !== deleteTarget.id))
-      ToastWizard.standard("success", `Deleted "${deleteTarget.filename}"`)
-      setDeleteTarget(null)
+      await api.delete(`/api/audio-files/${archiveTarget.id}`)
+      setArchivedFiles(prev => [{ ...archiveTarget, is_deleted: true }, ...prev])
+      setFiles(prev => prev.filter(f => f.id !== archiveTarget.id))
+      setAssignments(prev => prev.filter(a => a.audio_file_id !== archiveTarget.id))
+      ToastWizard.standard("success", `"${archiveTarget.filename}" archived`)
+      setArchiveTarget(null)
     } catch {
-      ToastWizard.standard("error", "Failed to delete file")
+      ToastWizard.standard("error", "Failed to archive file")
     } finally {
-      setDeleting(false)
+      setArchiving(false)
+    }
+  }
+
+  // ── Restore file ─────────────────────────────────────────────────────────────
+
+  const restoreFile = async (file: AudioFile) => {
+    try {
+      const res = await api.patch(`/api/audio-files/${file.id}/restore`)
+      setFiles(prev => [res.data, ...prev])
+      setArchivedFiles(prev => prev.filter(f => f.id !== file.id))
+      ToastWizard.standard("success", `"${file.filename}" restored`)
+    } catch {
+      ToastWizard.standard("error", "Failed to restore file")
+    }
+  }
+
+  // ── Permanent delete (only for archived files) ───────────────────────────────
+
+  const confirmPermDelete = async () => {
+    if (!permDeleteTarget) return
+    setPermDeleting(true)
+    try {
+      await api.delete(`/api/audio-files/${permDeleteTarget.id}/permanent`)
+      setArchivedFiles(prev => prev.filter(f => f.id !== permDeleteTarget.id))
+      ToastWizard.standard("success", `Permanently deleted "${permDeleteTarget.filename}"`)
+      setPermDeleteTarget(null)
+    } catch {
+      ToastWizard.standard("error", "Failed to permanently delete file")
+    } finally {
+      setPermDeleting(false)
     }
   }
 
@@ -590,7 +633,7 @@ export default function ManageFilesPage() {
                   lockLoading={lockLoading}
                   onToggleLock={toggleLock}
                   onNavigate={router.push}
-                  onDelete={setDeleteTarget}
+                  onArchive={setArchiveTarget}
                   onMetadataUpdate={(fileId, language, numSpeakers) => {
                     setFiles(prev => prev.map(f =>
                       f.id === fileId ? { ...f, language, num_speakers: numSpeakers } : f
@@ -603,57 +646,113 @@ export default function ManageFilesPage() {
         </Box>
       )}
 
-      {/* Delete confirm dialog */}
+      {/* Archived files section */}
+      {archivedFiles.length > 0 && (
+        <Collapsible.Root open={archivedOpen} onOpenChange={d => setArchivedOpen(d.open)} mt={6}>
+          <Collapsible.Trigger asChild>
+            <Button size="sm" variant="ghost" color="fg.muted" px={2}>
+              {archivedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              Archived files ({archivedFiles.length})
+            </Button>
+          </Collapsible.Trigger>
+          <Collapsible.Content>
+            <Box mt={3} bg="bg.subtle" borderWidth="1px" borderColor="border" rounded="lg" overflow="hidden">
+              <Table.Root size="sm">
+                <Table.Body>
+                  {archivedFiles.map(file => (
+                    <Table.Row key={file.id} opacity={0.7} _hover={{ opacity: 1 }}>
+                      <Table.Cell px={4} py={3}>
+                        <HStack gap={2}>
+                          <FileAudio2 size={13} color="var(--chakra-colors-fg-muted)" />
+                          <Text fontSize="xs" fontFamily="mono" color="fg">{file.filename}</Text>
+                          <Badge colorPalette="orange" size="xs" variant="subtle">archived</Badge>
+                        </HStack>
+                      </Table.Cell>
+                      <Table.Cell px={4} py={3}>
+                        <HStack gap={2}>
+                          <Button size="xs" colorPalette="teal" variant="outline" onClick={() => restoreFile(file)}>
+                            <RotateCcw size={11} /> Restore
+                          </Button>
+                          <Button size="xs" colorPalette="red" variant="ghost"
+                            onClick={() => setPermDeleteTarget(file)}
+                          >
+                            <Trash2 size={11} /> Delete permanently
+                          </Button>
+                        </HStack>
+                      </Table.Cell>
+                    </Table.Row>
+                  ))}
+                </Table.Body>
+              </Table.Root>
+            </Box>
+          </Collapsible.Content>
+        </Collapsible.Root>
+      )}
+
+      {/* Archive confirm dialog */}
       <Dialog.Root
-        open={!!deleteTarget}
-        onOpenChange={({ open }) => { if (!open && !deleting) setDeleteTarget(null) }}
+        open={!!archiveTarget}
+        onOpenChange={({ open }) => { if (!open && !archiving) setArchiveTarget(null) }}
       >
         <Portal>
           <Dialog.Backdrop />
           <Dialog.Positioner>
             <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" maxW="420px">
               <Dialog.Header>
-                <Dialog.Title color="fg">Delete File</Dialog.Title>
+                <Dialog.Title color="fg">Archive File</Dialog.Title>
+              </Dialog.Header>
+              <Dialog.Body>
+                <Text color="fg.muted" fontSize="sm">
+                  Archive{" "}
+                  <Text as="span" color="fg" fontFamily="mono" fontWeight="medium">
+                    {archiveTarget?.filename}
+                  </Text>
+                  ? The file will be hidden from all active lists. You can restore it or permanently delete it later from the Archived section.
+                </Text>
+              </Dialog.Body>
+              <Dialog.Footer gap={2}>
+                <Button size="sm" variant="ghost" onClick={() => setArchiveTarget(null)} disabled={archiving}>
+                  Cancel
+                </Button>
+                <Button size="sm" colorPalette="orange" onClick={confirmArchive} loading={archiving}>
+                  <Archive size={13} /> Archive
+                </Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Positioner>
+        </Portal>
+      </Dialog.Root>
+
+      {/* Permanent delete confirm dialog */}
+      <Dialog.Root
+        open={!!permDeleteTarget}
+        onOpenChange={({ open }) => { if (!open && !permDeleting) setPermDeleteTarget(null) }}
+      >
+        <Portal>
+          <Dialog.Backdrop />
+          <Dialog.Positioner>
+            <Dialog.Content bg="bg.subtle" borderWidth="1px" borderColor="border" maxW="420px">
+              <Dialog.Header>
+                <Dialog.Title color="fg">Permanently Delete File</Dialog.Title>
               </Dialog.Header>
               <Dialog.Body>
                 <Text color="fg.muted" fontSize="sm">
                   Permanently delete{" "}
                   <Text as="span" color="fg" fontFamily="mono" fontWeight="medium">
-                    {deleteTarget?.filename}
+                    {permDeleteTarget?.filename}
                   </Text>
                   {" "}and all linked data (segments, assignments, JSONs)?
                 </Text>
-                {deleteTarget && deleteTarget.json_types.length > 0 && (
-                  <HStack mt={3} gap={1}>
-                    <Text fontSize="xs" color="fg.muted">Linked JSONs:</Text>
-                    {deleteTarget.json_types.map(t => (
-                      <Badge key={t} size="xs" colorPalette="green" variant="subtle" fontSize="9px">
-                        {JSON_TYPE_META[t]?.short ?? t}
-                      </Badge>
-                    ))}
-                  </HStack>
-                )}
                 <Text mt={3} fontSize="xs" color="red.400" fontWeight="medium">
                   This action cannot be undone.
                 </Text>
               </Dialog.Body>
               <Dialog.Footer gap={2}>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setDeleteTarget(null)}
-                  disabled={deleting}
-                >
+                <Button size="sm" variant="ghost" onClick={() => setPermDeleteTarget(null)} disabled={permDeleting}>
                   Cancel
                 </Button>
-                <Button
-                  size="sm"
-                  colorPalette="red"
-                  onClick={confirmDelete}
-                  loading={deleting}
-                >
-                  <Trash2 size={13} />
-                  Delete
+                <Button size="sm" colorPalette="red" onClick={confirmPermDelete} loading={permDeleting}>
+                  <Trash2 size={13} /> Delete Permanently
                 </Button>
               </Dialog.Footer>
             </Dialog.Content>
@@ -674,7 +773,7 @@ function FileTableRow({
   lockLoading,
   onToggleLock,
   onNavigate,
-  onDelete,
+  onArchive,
   onMetadataUpdate,
 }: {
   row: FileRow
@@ -682,7 +781,7 @@ function FileTableRow({
   lockLoading: Record<string, boolean>
   onToggleLock: (fileId: number, taskType: string, locked: boolean) => void
   onNavigate: (href: string) => void
-  onDelete: (file: AudioFile) => void
+  onArchive: (file: AudioFile) => void
   onMetadataUpdate: (fileId: number, language: string | null, numSpeakers: number | null) => void
 }) {
   const { file, stage, taskSummary } = row
@@ -943,13 +1042,13 @@ function FileTableRow({
           <IconButton
             size="2xs"
             variant="ghost"
-            colorPalette="red"
-            aria-label="Delete file"
-            title="Delete file and all linked data"
+            colorPalette="orange"
+            aria-label="Archive file"
+            title="Archive file (can be restored later)"
             mt={1}
-            onClick={() => onDelete(file)}
+            onClick={() => onArchive(file)}
           >
-            <Trash2 size={11} />
+            <Archive size={11} />
           </IconButton>
         </VStack>
       </Table.Cell>

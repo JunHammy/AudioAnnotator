@@ -4,7 +4,7 @@
 #   01-dashboard.mp4     — pan across stat cards, dataset progress, annotator summary
 #   02-upload.mp4        — single file upload flow, then folder upload with subfolder detection
 #   03-datasets.mp4      — datasets list → edit dataset card → add files → export buttons
-#   04-files.mp4         — dataset detail → search → archive a file → restore from archived view
+#   04-files.mp4         — Manage Files page → status badges → edit metadata → lock toggles → archive
 #   05-accounts.mp4      — manage accounts → create user → per-user action buttons
 #   06-assign.mp4        — single-file assignment → bulk assign → reopen a completed task
 #   07-review.mp4        — review page → open file → tabs → emotion pills → lock toggle → export

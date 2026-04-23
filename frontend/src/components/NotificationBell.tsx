@@ -172,8 +172,8 @@ export function NotificationBell({ collapsed }: Props) {
 
       {/* Notification panel dialog */}
       <Dialog.Root open={open} onOpenChange={({ open }) => setOpen(open)}>
-        <Dialog.Backdrop />
-        <Dialog.Positioner>
+        <Dialog.Backdrop style={{ zIndex: 1400 }} />
+        <Dialog.Positioner style={{ zIndex: 1400 }}>
           <Dialog.Content
             bg="bg.subtle"
             borderWidth="1px"

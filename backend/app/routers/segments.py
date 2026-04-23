@@ -123,8 +123,8 @@ async def update_speaker_segment(
                 select(AudioFile).where(AudioFile.id == segment.audio_file_id)
             )).scalar_one_or_none()
             if af:
-                requesting_speaker_fields = any(f is not None for f in [body.speaker_label, body.is_ambiguous, body.start_time, body.end_time])
-                requesting_gender = body.gender is not None
+                requesting_speaker_fields = any(f in body.model_fields_set for f in ["speaker_label", "is_ambiguous", "start_time", "end_time"])
+                requesting_gender = "gender" in body.model_fields_set
                 # notes is always allowed — not a locked structural field
                 if requesting_speaker_fields and af.collaborative_locked_speaker:
                     raise LOCKED_ERROR
@@ -134,7 +134,7 @@ async def update_speaker_segment(
     # Optimistic locking — only enforced for label/metadata changes, not time-only (drag) changes.
     # Speaker annotators are sole editors of timing; concurrent drag conflicts are not a concern.
     has_label_changes = any(
-        getattr(body, f) is not None
+        f in body.model_fields_set
         for f in ["speaker_label", "gender", "emotion", "notes", "is_ambiguous"]
     )
     if has_label_changes:
@@ -143,21 +143,23 @@ async def update_speaker_segment(
         if client_ts < server_ts:
             raise STALE_ERROR
 
-    # Standard fields
+    # Standard fields — use model_fields_set so explicitly-sent null clears the field,
+    # while absent fields (not in the PATCH body) are left untouched.
     for field in ["speaker_label", "gender", "emotion", "notes", "is_ambiguous"]:
+        if field not in body.model_fields_set:
+            continue
         new_val = getattr(body, field, None)
-        if new_val is not None:
-            old_val = getattr(segment, field)
-            if old_val != new_val:
-                db.add(SegmentEditHistory(
-                    segment_type="speaker",
-                    segment_id=segment_id,
-                    field_changed=field,
-                    old_value=str(old_val) if old_val is not None else None,
-                    new_value=str(new_val),
-                    edited_by=current_user.id,
-                ))
-                setattr(segment, field, new_val)
+        old_val = getattr(segment, field)
+        if old_val != new_val:
+            db.add(SegmentEditHistory(
+                segment_type="speaker",
+                segment_id=segment_id,
+                field_changed=field,
+                old_value=str(old_val) if old_val is not None else None,
+                new_value=str(new_val) if new_val is not None else None,
+                edited_by=current_user.id,
+            ))
+            setattr(segment, field, new_val)
 
     # Time editing — only allowed on shared baseline segments, not per-annotator copies
     times_changed = False
@@ -222,7 +224,7 @@ async def create_speaker_segment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Add a new speaker segment (and matching transcription segment). Requires speaker assignment."""
+    """Add a new speaker segment. Requires speaker assignment."""
     # Verify the file exists
     af = (await db.execute(select(AudioFile).where(AudioFile.id == body.audio_file_id))).scalar_one_or_none()
     if not af:
@@ -251,22 +253,10 @@ async def create_speaker_segment(
     )
     db.add(new_seg)
 
-    # Create a matching blank transcription segment
-    new_trans = TranscriptionSegment(
-        audio_file_id=body.audio_file_id,
-        annotator_id=current_user.id,
-        start_time=round(body.start_time, 3),
-        end_time=round(body.end_time, 3),
-        original_text="",
-    )
-    db.add(new_trans)
-
     await db.flush()
     await db.refresh(new_seg)
-    await db.refresh(new_trans)
 
     await sse_manager.broadcast(body.audio_file_id, {"type": "speaker_created", "data": _spk_dict(new_seg)})
-    await sse_manager.broadcast(body.audio_file_id, {"type": "transcription_created", "data": _trans_dict(new_trans)})
 
     return new_seg
 
@@ -472,7 +462,7 @@ async def update_transcription_segment(
     await _check_transcription_lock(db, segment.audio_file_id, current_user)
 
     # Optimistic locking — only enforced for text/notes changes, not time-only edits
-    has_text_changes = body.edited_text is not None or body.notes is not None
+    has_text_changes = "edited_text" in body.model_fields_set or "notes" in body.model_fields_set
     if has_text_changes:
         client_ts = body.updated_at.replace(tzinfo=timezone.utc) if body.updated_at.tzinfo is None else body.updated_at
         server_ts = segment.updated_at.replace(tzinfo=timezone.utc) if segment.updated_at.tzinfo is None else segment.updated_at
@@ -480,19 +470,20 @@ async def update_transcription_segment(
             raise STALE_ERROR
 
     for field in ["edited_text", "notes"]:
+        if field not in body.model_fields_set:
+            continue
         new_val = getattr(body, field, None)
-        if new_val is not None:
-            old_val = getattr(segment, field)
-            if old_val != new_val:
-                db.add(SegmentEditHistory(
-                    segment_type="transcription",
-                    segment_id=segment_id,
-                    field_changed=field,
-                    old_value=old_val,
-                    new_value=new_val,
-                    edited_by=current_user.id,
-                ))
-                setattr(segment, field, new_val)
+        old_val = getattr(segment, field)
+        if old_val != new_val:
+            db.add(SegmentEditHistory(
+                segment_type="transcription",
+                segment_id=segment_id,
+                field_changed=field,
+                old_value=old_val,
+                new_value=new_val,
+                edited_by=current_user.id,
+            ))
+            setattr(segment, field, new_val)
 
     # Time editing
     if body.start_time is not None and body.start_time != segment.start_time:
