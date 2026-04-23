@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text as sql_text
 
 from app.auth.dependencies import require_admin
 from app.auth.jwt import hash_password
@@ -58,8 +58,25 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="User not found")
     await write_audit_log(db, _admin.id, "delete_user", "user", user.id,
                           {"username": user.username, "role": user.role})
-    await db.delete(user)
+
+    uid = user_id
+    aid = _admin.id
+    # Reassign non-nullable FKs to admin so history is preserved
+    await db.execute(sql_text("UPDATE datasets SET created_by = :aid WHERE created_by = :uid"), {"aid": aid, "uid": uid})
+    await db.execute(sql_text("UPDATE audio_files SET uploaded_by = :aid WHERE uploaded_by = :uid"), {"aid": aid, "uid": uid})
+    await db.execute(sql_text("UPDATE speaker_segments SET annotator_id = :aid WHERE annotator_id = :uid"), {"aid": aid, "uid": uid})
+    await db.execute(sql_text("UPDATE transcription_segments SET annotator_id = :aid WHERE annotator_id = :uid"), {"aid": aid, "uid": uid})
+    await db.execute(sql_text("UPDATE segment_edit_history SET edited_by = :aid WHERE edited_by = :uid"), {"aid": aid, "uid": uid})
+    # Nullify nullable FKs
+    await db.execute(sql_text("UPDATE audio_files SET locked_by = NULL WHERE locked_by = :uid"), {"uid": uid})
+    await db.execute(sql_text("UPDATE final_annotations SET finalized_by = NULL WHERE finalized_by = :uid"), {"uid": uid})
+    await db.execute(sql_text("UPDATE audit_logs SET user_id = NULL WHERE user_id = :uid"), {"uid": uid})
+    # Delete assignments (notifications cascade automatically)
+    await db.execute(sql_text("DELETE FROM assignments WHERE annotator_id = :uid"), {"uid": uid})
     await db.flush()
+
+    await db.expunge(user)
+    await db.execute(sql_text("DELETE FROM users WHERE id = :uid"), {"uid": uid})
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
