@@ -730,7 +730,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                 <Select.Root
                   collection={createListCollection({
                     items: [
-                      ...(speakerLabels ?? []).map(l => ({ label: l, value: l })),
+                      ...(speakerLabels ?? []).filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => ({ label: l, value: l })),
                       // Include current label if it's not in the list (manually typed, not a special label)
                       ...(speakerLabel && !(speakerLabels ?? []).includes(speakerLabel)
                         && !["speaker_unknown", "speaker_group"].includes(speakerLabel)
@@ -762,7 +762,7 @@ const SegmentEditor = forwardRef<SegmentEditorRef, {
                   </Select.Trigger>
                   <Select.Positioner>
                     <Select.Content>
-                      {(speakerLabels ?? []).map(v => (
+                      {(speakerLabels ?? []).filter(v => !["speaker_unknown", "speaker_group"].includes(v)).map(v => (
                         <Select.Item key={v} item={{ label: v, value: v }}>
                           {v}
                         </Select.Item>
@@ -2340,7 +2340,7 @@ function AnnotateInner() {
                   <Select.Root
                     collection={createListCollection({
                       items: [
-                        ...speakerLabels.map(l => ({ label: l, value: l })),
+                        ...speakerLabels.filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => ({ label: l, value: l })),
                         { label: "speaker_unknown", value: "speaker_unknown" },
                         { label: "speaker_group",   value: "speaker_group"  },
                         { label: "— none / new —",  value: ""               },
@@ -2355,7 +2355,7 @@ function AnnotateInner() {
                     </Select.Trigger>
                     <Select.Positioner>
                       <Select.Content>
-                        {speakerLabels.map(l => (
+                        {speakerLabels.filter(l => !["speaker_unknown", "speaker_group"].includes(l)).map(l => (
                           <Select.Item key={l} item={{ label: l, value: l }}>{l}</Select.Item>
                         ))}
                         <Select.Item item={{ label: "speaker_unknown", value: "speaker_unknown" }}>speaker_unknown</Select.Item>
